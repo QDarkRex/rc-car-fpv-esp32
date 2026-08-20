@@ -1,0 +1,10 @@
+# Ground station RC Car — dependensi sengaja dijaga minimal.
+#
+# pygame menangani TIGA hal sekaligus: pembacaan stir PXN, jendela tampilan,
+# dan decoding JPEG (lewat SDL_image). Karena itu OpenCV tidak diperlukan.
+#
+# Pasang dengan:
+#     pip install -r requirements.txt
+
+pygame>=2.5.0
+PyYAML>=6.0

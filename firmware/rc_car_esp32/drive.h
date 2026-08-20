@@ -1,0 +1,53 @@
+// drive.h — kendali motor (L298N) dan servo kemudi.
+//
+// Kelas ini tidak tahu apa-apa soal jaringan. Ia hanya menerima perintah
+// dalam skala -1000..1000 dan menerjemahkannya menjadi sinyal pin, sambil
+// menegakkan batas keselamatan hardware: deadband, slew rate, jeda balik
+// arah, dan batas mekanis servo.
+
+#pragma once
+
+#include <Arduino.h>
+#include <stdint.h>
+
+#include "config.h"
+
+class Drive {
+ public:
+  void begin();
+
+  // Perintah dari sisi darat.
+  // steer   : -1000..1000, negatif = kiri
+  // throttle: -1000..1000, negatif = mundur
+  // brake   : 0..255, 0 = tidak mengerem. Kalau di atas ambang, rem menang
+  //           atas throttle -- lihat update() di drive.cpp.
+  void setCommand(int16_t steer, int16_t throttle, uint8_t brake);
+
+  // Netralkan segera: motor berhenti, servo ke tengah.
+  // Dipanggil saat failsafe, disarm, dan saat boot.
+  void neutral();
+
+  // Panggil sesering mungkin dari loop(). Di sinilah slew rate, deadband,
+  // dan jeda balik arah benar-benar diterapkan.
+  void update();
+
+  int16_t appliedThrottle() const { return _appliedThrottle; }
+  uint16_t servoMicros() const { return _servoUs; }
+  int8_t direction() const { return _direction; }
+
+ private:
+  void applyMotorOutput(int8_t wantDirection, uint32_t magnitude);
+  void applyBrakeOutput(uint8_t brake);
+  void writeServoMicros(uint16_t micros);
+  void coast();
+
+  int16_t _targetThrottle = 0;
+  int16_t _appliedThrottle = 0;
+  int16_t _targetSteer = 0;
+  uint8_t _targetBrake = 0;
+  uint16_t _servoUs = SERVO_CENTER_US;
+  int8_t _direction = 0;              // -1 mundur, 0 diam, +1 maju
+  bool _braking = false;
+  uint32_t _lastUpdateMs = 0;
+  uint32_t _reverseGuardUntilMs = 0;
+};

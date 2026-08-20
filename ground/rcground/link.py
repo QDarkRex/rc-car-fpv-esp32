@@ -1,0 +1,186 @@
+"""Tautan UDP ke mobil: pengiriman kendali, penerimaan telemetri, dan RTT.
+
+Mobil memakai IP statis, jadi normalnya paket dikirim unicast langsung.
+Selama telemetri belum pernah diterima, paket juga dikirim ke alamat broadcast
+sebagai cadangan bila subnet ternyata berbeda. Selama fase itu tautan dianggap
+BELUM terkunci dan arming tidak diizinkan -- lihat docs/protocol.md bagian 6.
+
+Penerimaan berjalan di thread sendiri. Ini bukan sekadar rapi: kalau telemetri
+baru dibaca saat loop render kebetulan sempat, waktu tibanya ikut terkena
+jadwal render dan angka RTT di HUD menjadi salah -- terbaca puluhan milidetik
+padahal jaringannya sehat. Thread ini mencatat waktu tiba begitu paket sampai.
+"""
+
+from __future__ import annotations
+
+import socket
+import threading
+import time
+from collections import deque
+
+from . import protocol as proto
+
+RECV_TIMEOUT = 0.2
+
+
+class Link:
+    def __init__(self, config: dict) -> None:
+        net = config.get("network", {})
+        self.car_addr = (
+            str(net.get("car_ip", "192.168.137.50")),
+            int(net.get("car_port", proto.CONTROL_PORT)),
+        )
+        self.broadcast_addr = (
+            str(net.get("broadcast", "255.255.255.255")),
+            int(net.get("car_port", proto.CONTROL_PORT)),
+        )
+        self.timeout = float(net.get("link_timeout_ms", 500)) / 1000.0
+
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        self.sock.bind(("0.0.0.0", 0))
+        self.sock.settimeout(RECV_TIMEOUT)
+
+        self._lock = threading.Lock()
+        self._seq = 0
+        self._send_times: dict = {}
+        self._send_order: deque = deque()
+
+        self.locked_addr: tuple | None = None
+        self.telemetry: proto.Telemetry | None = None
+        self.last_telemetry_at = 0.0
+        self.rtt_ms: float | None = None
+        self._rtt_window: deque = deque(maxlen=20)
+        self._telemetry_times: deque = deque(maxlen=64)
+
+        self.tx_count = 0
+        self.rx_count = 0
+        self.bad_count = 0
+
+        self._stop = threading.Event()
+        self._rx_thread = threading.Thread(
+            target=self._rx_loop, name="telemetry", daemon=True
+        )
+        self._rx_thread.start()
+
+    # -- keadaan ---------------------------------------------------------
+    @property
+    def locked(self) -> bool:
+        """True setelah mobil pernah membalas, sehingga alamatnya pasti."""
+        return self.locked_addr is not None
+
+    @property
+    def connected(self) -> bool:
+        """True selama telemetri masih mengalir dalam batas waktu."""
+        with self._lock:
+            last = self.last_telemetry_at
+        if last == 0.0:
+            return False
+        return (time.monotonic() - last) <= self.timeout
+
+    @property
+    def telemetry_hz(self) -> float:
+        """Laju telemetri terukur dalam 2 detik terakhir (harusnya ~10 Hz)."""
+        now = time.monotonic()
+        with self._lock:
+            times = [t for t in self._telemetry_times if now - t <= 2.0]
+        if len(times) < 2:
+            return 0.0
+        span = times[-1] - times[0]
+        return 0.0 if span <= 0 else (len(times) - 1) / span
+
+    @property
+    def target_description(self) -> str:
+        if self.locked_addr:
+            return f"{self.locked_addr[0]}:{self.locked_addr[1]}"
+        return f"{self.car_addr[0]} + broadcast (mencari)"
+
+    # -- pengiriman ------------------------------------------------------
+    def send(
+        self, steer: float, throttle: float, armed: bool, brake: float = 0.0
+    ) -> None:
+        """Kirim satu paket kendali.
+
+        steer/throttle dalam rentang -1..1, brake dalam rentang 0..1.
+        """
+        # Pengaman berlapis: arming tidak boleh terkirim sebelum tautan terkunci.
+        if armed and not self.locked:
+            armed = False
+
+        flags = proto.FLAG_ARMED if armed else 0
+
+        with self._lock:
+            self._seq = (self._seq + 1) & 0xFFFF
+            seq = self._seq
+            self._send_times[seq] = time.monotonic()
+            self._send_order.append(seq)
+            while len(self._send_order) > 256:
+                self._send_times.pop(self._send_order.popleft(), None)
+
+        packet = proto.pack_control(
+            seq=seq,
+            flags=flags,
+            steer=int(round(steer * proto.AXIS_MAX)),
+            throttle=int(round(throttle * proto.AXIS_MAX)),
+            brake=int(round(max(0.0, min(1.0, brake)) * 255)),
+        )
+
+        targets = (
+            [self.locked_addr] if self.locked else [self.car_addr, self.broadcast_addr]
+        )
+        for addr in targets:
+            try:
+                self.sock.sendto(packet, addr)
+                self.tx_count += 1
+            except OSError:
+                # Jaringan sedang tidak tersedia (hotspot mati, adapter turun).
+                # Bukan kondisi fatal: failsafe di mobil yang akan bertindak.
+                pass
+
+    # -- penerimaan ------------------------------------------------------
+    def _rx_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                data, addr = self.sock.recvfrom(256)
+            except (TimeoutError, socket.timeout):
+                continue
+            except OSError:
+                return
+
+            arrived = time.monotonic()
+            telemetry = proto.parse_telemetry(data)
+            if telemetry is None:
+                with self._lock:
+                    self.bad_count += 1
+                continue
+
+            with self._lock:
+                self.rx_count += 1
+                self.telemetry = telemetry
+                self.last_telemetry_at = arrived
+                self._telemetry_times.append(arrived)
+
+                if self.locked_addr is None:
+                    self.locked_addr = addr
+
+                sent_at = self._send_times.get(telemetry.seq_echo)
+                if sent_at is not None:
+                    self._rtt_window.append((arrived - sent_at) * 1000.0)
+                    self.rtt_ms = sum(self._rtt_window) / len(self._rtt_window)
+
+    def poll(self) -> None:
+        """Disediakan agar pemanggil boleh memanggilnya tiap loop.
+
+        Penerimaan sudah ditangani thread telemetri, jadi di sini tidak ada
+        pekerjaan tersisa. Dibiarkan ada supaya alur loop utama tetap terbaca
+        jelas dan urutan kirim/terima tidak menjadi implisit.
+        """
+        return
+
+    def close(self) -> None:
+        self._stop.set()
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+        self._rx_thread.join(timeout=1.0)

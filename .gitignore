@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Cadangan otomatis
+*.bak
+*.yaml.bak
+
+# Keluaran build Arduino
+build/
+*.elf
+*.bin.tmp
+
+# Berkas kunci sementara Microsoft Office
+~$*
+
+# Berkas sistem
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Editor
+.vscode/
+.idea/

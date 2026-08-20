@@ -1,0 +1,65 @@
+# Konfigurasi ground station RC Car
+#
+# Semua yang ada di berkas ini diterapkan di SISI DARAT. Mengubahnya cukup
+# simpan berkas lalu jalankan ulang main.py -- ESP32 tidak perlu di-flash ulang.
+#
+# Kalibrasi mentah stir (indeks axis, nilai ujung) TIDAK ada di sini;
+# itu ada di calibration.yaml yang dihasilkan calibrate.py.
+
+network:
+  # IP statis mobil. Nilai default cocok untuk Windows Mobile Hotspot yang
+  # selalu memakai subnet 192.168.137.x dengan gateway .1
+  # Harus sama dengan CAR_IP di firmware/rc_car_esp32/config.h
+  car_ip: 192.168.137.50
+  car_port: 4210
+
+  # Dipakai hanya sebagai cadangan selama mobil belum membalas, kalau-kalau
+  # subnet ternyata berbeda dari dugaan. Setelah mobil membalas sekali,
+  # aplikasi mengunci ke alamat unicast-nya.
+  broadcast: 192.168.137.255
+
+  control_rate_hz: 50      # laju kirim perintah; 50 Hz = tiap 20 ms
+  link_timeout_ms: 500     # telemetri hilang selama ini -> tautan dianggap putus
+
+camera:
+  # Harus sama dengan CAM_IP di firmware/rc_cam_esp32
+  stream_url: http://192.168.137.60/stream
+  timeout_s: 3.0
+
+steering:
+  deadzone: 0.03      # abaikan getaran kecil di sekitar tengah (0..1)
+  trim: 0.0000        # geser titik tengah kalau mobil menarik ke satu sisi
+  expo: 0.30          # 0 = linear; makin besar makin halus di sekitar tengah
+  max_angle: 1.0      # batasi sudut belok maksimum (0..1)
+  invert: false       # true kalau arah belok terbalik dari arah stir
+
+throttle:
+  deadzone: 0.05
+  expo: 0.40
+
+  # BATAS KECEPATAN. Untuk uji coba pertama kali, turunkan max_forward ke 0.3
+  # dan naikkan bertahap setelah yakin kendali dan failsafe berjalan benar.
+  max_forward: 0.30
+  max_reverse: 0.50
+
+  # Batas perubahan gas per detik. 3.0 berarti dari diam ke gas penuh butuh
+  # sekitar 0,33 detik. Mencegah sentakan arus yang menjatuhkan tegangan
+  # pada paket 4S 850 mAh -- jangan dinaikkan terlalu tinggi.
+  slew_rate: 3.0
+
+shifter:
+  enabled: true
+  # Batas kecepatan tiap gigi maju, sebagai kelipatan throttle.max_forward.
+  # Gigi rendah memberi seluruh jangkauan pedal untuk rentang kecepatan
+  # sempit -- itulah yang membuat manuver rapat jadi mungkin dengan L298N.
+  gear_ratios: [0.35, 0.55, 0.75, 0.90, 1.00, 1.00]
+  require_neutral_to_arm: true
+
+brake:
+  deadzone: 0.05
+  strength: 1.0       # 0..1, skala kekuatan rem maksimum
+
+display:
+  width: 960
+  height: 720
+  vsync: false
