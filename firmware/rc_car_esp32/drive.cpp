@@ -59,15 +59,25 @@ void Drive::update() {
   _lastUpdateMs = now;
 
   // --- servo: langsung, tanpa slew. Servo punya peredamnya sendiri.
+  //
+  // SERVO_INVERT membalik arah belok tanpa perlu menukar SERVO_MIN_US dengan
+  // SERVO_MAX_US -- keduanya harus tetap MIN < MAX supaya constrain() di
+  // writeServoMicros() bekerja benar sebagai pengaman batas mekanis.
+#if SERVO_INVERT
+  const int32_t steerCmd = -(int32_t)_targetSteer;
+#else
+  const int32_t steerCmd = (int32_t)_targetSteer;
+#endif
+
   int32_t micros;
-  if (_targetSteer >= 0) {
+  if (steerCmd >= 0) {
     micros = SERVO_CENTER_US +
-             (int32_t)_targetSteer * (SERVO_MAX_US - SERVO_CENTER_US) / RC_AXIS_MAX;
+             steerCmd * (SERVO_MAX_US - SERVO_CENTER_US) / RC_AXIS_MAX;
   } else {
     // Dihitung terpisah agar endpoint kiri dan kanan boleh tidak simetris,
     // yang lazim terjadi pada linkage kemudi sungguhan.
     micros = SERVO_CENTER_US +
-             (int32_t)_targetSteer * (SERVO_CENTER_US - SERVO_MIN_US) / RC_AXIS_MAX;
+             steerCmd * (SERVO_CENTER_US - SERVO_MIN_US) / RC_AXIS_MAX;
   }
   writeServoMicros((uint16_t)micros);
 
@@ -150,7 +160,16 @@ void Drive::applyMotorOutput(int8_t wantDirection, uint32_t magnitude) {
     return;
   }
 
-  if (wantDirection > 0) {
+  // MOTOR_INVERT membalik arti "maju" tanpa perlu menukar kabel OUT1/OUT2.
+  // Aman dilakukan di sini karena rem dan coast sama-sama simetris terhadap
+  // arah -- lihat penjelasan di config.h.
+#if MOTOR_INVERT
+  const bool forward = (wantDirection < 0);
+#else
+  const bool forward = (wantDirection > 0);
+#endif
+
+  if (forward) {
     digitalWrite(PIN_IN1, HIGH);
     digitalWrite(PIN_IN2, LOW);
   } else {
@@ -159,6 +178,13 @@ void Drive::applyMotorOutput(int8_t wantDirection, uint32_t magnitude) {
   }
   _direction = wantDirection;
 
+#if MOTOR_BINARY
+  // Mode 1/0: begitu perintah melewati MOTOR_DEADBAND, langsung duty penuh.
+  // Arah tetap dihormati -- yang biner hanya besarnya, bukan maju/mundurnya.
+  // Lihat alasannya di config.h.
+  (void)magnitude;
+  ledcWrite(PIN_ENA, MOTOR_PWM_MAX);
+#else
   // Petakan rentang perintah yang berguna (deadband..1000) ke rentang duty
   // yang berguna (MOTOR_MIN_DUTY..MOTOR_PWM_MAX), bukan ke 0..MOTOR_PWM_MAX.
   //
@@ -174,6 +200,7 @@ void Drive::applyMotorOutput(int8_t wantDirection, uint32_t magnitude) {
     duty = MOTOR_PWM_MAX;
   }
   ledcWrite(PIN_ENA, duty);
+#endif
 }
 
 void Drive::applyBrakeOutput(uint8_t brake) {
@@ -207,4 +234,8 @@ void Drive::writeServoMicros(uint16_t micros) {
 
   ledcWrite(PIN_SERVO, duty);
   _servoUs = micros;
+}
+
+uint32_t Drive::motorDuty() const {
+  return ledcRead(PIN_ENA);
 }

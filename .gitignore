@@ -25,3 +25,8 @@ desktop.ini
 # Editor
 .vscode/
 .idea/
+
+# Arsip source yang dibuat manual untuk dibagikan. Isinya duplikat dari
+# yang sudah dilacak git dan langsung usang begitu source berubah, jadi
+# tidak perlu ikut ter-commit.
+*.zip

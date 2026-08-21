@@ -54,6 +54,9 @@ class GroundStation:
         if args.cam:
             self.config["camera"]["stream_url"] = args.cam
 
+        self.disarm_on_link_loss = bool(
+            self.config["network"].get("disarm_on_link_loss", True)
+        )
         self.rate = float(self.config["network"].get("control_rate_hz", 50))
         self.period = 1.0 / max(1.0, self.rate)
 
@@ -307,9 +310,17 @@ class GroundStation:
                       "beralih ke unicast")
                 self._notify("Mobil ditemukan — tekan SPASI untuk arm")
 
-            # Tautan putus saat armed harus otomatis melepas arming di sisi
-            # darat juga, supaya pemulihan WiFi tidak langsung menghidupkan motor.
-            if self.armed and not self.link.connected and self.link.rtt_ms is not None:
+            # Tautan putus saat armed melepas arming di sisi darat juga, supaya
+            # pemulihan WiFi tidak langsung menghidupkan motor. Bisa dimatikan
+            # lewat network.disarm_on_link_loss -- lihat catatannya di
+            # config.yaml, dan pastikan sepasang dengan FAILSAFE_ENABLED di
+            # firmware supaya kedua sisi sepakat.
+            if (
+                self.disarm_on_link_loss
+                and self.armed
+                and not self.link.connected
+                and self.link.rtt_ms is not None
+            ):
                 self._disarm("Tautan putus — disarmed")
 
             throttle_out = state.throttle if self.armed else 0.0

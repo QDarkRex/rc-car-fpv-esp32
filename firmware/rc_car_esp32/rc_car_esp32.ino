@@ -22,11 +22,13 @@
 #include <WiFi.h>
 
 #include "config.h"
+#include "console.h"
 #include "drive.h"
 #include "link.h"
 #include "protocol.h"
 
 Drive drive;
+Console console;
 CarLink carLink;   // JANGAN diberi nama "link": bentrok dengan fungsi POSIX link() dari unistd.h
 
 static uint32_t lastStatusMs = 0;
@@ -70,6 +72,16 @@ static void printStatus() {
   }
   lastStatusMs = now;
 
+  // Saat mode uji, nilai dari carLink selalu nol dan akan menyesatkan.
+  // Tampilkan keluaran Drive yang sesungguhnya -- itu yang sedang diuji.
+  if (console.testMode()) {
+    Serial.printf("MODE UJI | servo %4u us | duty_ena %4lu/%d | arah %+d | "
+                  "gas setelah slew %+5d\n",
+                  drive.servoMicros(), (unsigned long)drive.motorDuty(),
+                  MOTOR_PWM_MAX, drive.direction(), drive.appliedThrottle());
+    return;
+  }
+
   const char* state = carLink.failsafe() ? "FAILSAFE"
                     : carLink.armed()    ? "ARMED   "
                                       : "DISARMED";
@@ -102,13 +114,20 @@ void setup() {
   Serial.println("[BOOT] motor netral, servo di tengah");
 
   carLink.begin();
+  console.begin(&drive, &carLink);
   Serial.println("[BOOT] siap - menunggu paket kontrol");
 }
 
 void loop() {
   carLink.update();
 
-  if (carLink.failsafe() || !carLink.armed()) {
+  // Konsol dibaca lebih dulu supaya "test on" langsung berlaku di siklus ini.
+  console.update();
+
+  if (console.testMode()) {
+    // Mode uji: perintah dari ground station DIABAIKAN sepenuhnya. Console
+    // sudah memanggil drive.setCommand() sendiri di console.update().
+  } else if (carLink.failsafe() || !carLink.armed()) {
     // Netral bukan hanya "throttle nol": servo juga dikembalikan ke tengah
     // dan keadaan slew internal dinolkan, supaya arming berikutnya selalu
     // dimulai dari kondisi yang sama dan bisa diprediksi.
@@ -118,6 +137,12 @@ void loop() {
   }
 
   drive.update();
+
+  // SESUDAH drive.update(): perintah "servo <us>" menulis lebar pulsa mentah,
+  // dan drive.update() menghitung ulang servo tiap siklus. Tanpa dipanggil di
+  // sini, override itu akan tertimpa sebelum sempat terlihat.
+  console.postDrive();
+
   updateStatusLed();
   printStatus();
 }

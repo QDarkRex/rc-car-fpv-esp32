@@ -202,6 +202,11 @@ void CarLink::update() {
   receivePackets();
   sampleBattery();
 
+#if !FAILSAFE_ENABLED
+  // Failsafe dimatikan lewat config.h: perintah terakhir dipertahankan
+  // walaupun paket berhenti. Lihat penjelasan lengkap di config.h.
+  return;
+#else
   if ((millis() - _lastValidMs) > FAILSAFE_TIMEOUT_MS) {
     if (!_failsafe) {
       Serial.println("[LINK] FAILSAFE - paket kontrol putus");
@@ -223,4 +228,5 @@ void CarLink::update() {
     // fake_car.py dan tertangkap pengujian. Lihat docs/protocol.md bagian 5.
     _prevArmedFlag = true;
   }
+#endif
 }

@@ -94,13 +94,18 @@ munculnya mendadak — persis saat Anda paling butuh kendali.
               |                    +------+------+         v
               v                    |      |      |     GPIO34 ESP32
         L298N  Vs  ------+         |      |      |    (telemetri baterai)
-        L298N  GND       |         v      v      v
-                         |     Servo   ESP32   kamera
-                    [470uF/25V]  |     dev        |
-                                 |               [470uF] + [100nF]
+        L298N  GND       |         |      |      |
+        L298N  5V --------+        v      v      v
+        (logika,          |    Servo   ESP32   kamera
+         WAJIB!)          |      |     dev        |
+                    [470uF/25V]  |               [470uF] + [100nF]
+                                 |
                             [1000uF/25V]
 
-        L298N: jumper 5V DILEPAS, jumper ENA DILEPAS
+        L298N: jumper ENA DILEPAS. Jumper 5V (regulator) DILEPAS, TAPI pin
+        5V header tetap disambung ke step-down #2 -- itu jalur daya logika
+        chip L298N sendiri, bukan sekadar keluaran regulator yang dicabut.
+        Dibiarkan mengambang = H-bridge tidak pernah aktif sama sekali.
 
         SEMUA GND disatukan di SATU titik dekat terminal negatif baterai
         (star ground) -- termasuk GND kedua step-down, L298N, servo,
@@ -180,9 +185,18 @@ Semuanya ada di `firmware/rc_car_esp32/config.h` kalau perlu diubah.
 motor hanya punya dua keadaan: mati atau kencang penuh. Sinyal PWM dari
 GPIO 25 tidak akan berpengaruh sama sekali.
 
-**Jumper 5 V regulator.** Melepasnya mematikan regulator on-board 78M05.
-Wajib, karena rel 5 V kita datang dari step-down #2 — membiarkan dua sumber
-5 V saling terhubung akan membuat keduanya berebut dan panas.
+**Jumper 5 V regulator.** Melepasnya mematikan regulator on-board 78M05,
+karena kita tidak mau regulator itu yang menanggung beban servo dan kedua
+ESP32 (lihat bagian 2). **Tapi pin `5V` di header L298N BUKAN cuma
+keluaran regulator itu — ia juga jalur masuk daya logika untuk chip L298N
+sendiri.** Chip L298N butuh dua daya terpisah: `Vs` untuk mendorong motor,
+dan suplai logika (yang membaca sinyal `IN1`/`IN2`/`ENA`) lewat pin `5V`
+ini. Cabut jumpernya, tapi **pin `5V` WAJIB tetap disambung** — ke rel 5 V
+yang sama dengan servo (keluaran step-down #2), bukan dibiarkan
+mengambang. Kalau dibiarkan mengambang, chip L298N sama sekali tidak
+mendapat daya logika dan H-bridge tidak akan pernah aktif — gejalanya
+motor benar-benar diam tanpa getaran sekalipun sinyal dari ESP32 sudah
+benar.
 
 ### Sambungan
 
@@ -190,7 +204,7 @@ Wajib, karena rel 5 V kita datang dari step-down #2 — membiarkan dua sumber
 |---|---|
 | `Vs` (12 V in) | keluaran step-down #1 |
 | `GND` | star ground |
-| `5V` | **tidak disambung ke mana pun** |
+| `5V` | **step-down #2 (rel 5 V yang sama dengan servo) — WAJIB, bukan mengambang** |
 | `ENA` | ESP32 GPIO 4 |
 | `IN1` | ESP32 GPIO 15 |
 | `IN2` | ESP32 GPIO 22 |

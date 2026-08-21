@@ -63,10 +63,12 @@
 #define WIFI_SSID "RCCar"
 #define WIFI_PASS "admin.admin"
 
+// Router GL.iNet memakai subnet 192.168.8.x dengan gateway .1 dan DHCP
+// otomatis di rentang .100-.249 -- .60 dipilih supaya tidak bentrok.
 // Harus sama dengan camera.stream_url di ground/config.yaml
 #define CAM_IP_1 192
 #define CAM_IP_2 168
-#define CAM_IP_3 137
+#define CAM_IP_3 8
 #define CAM_IP_4 60
 #define GATEWAY_IP_4 1
 #define USE_DHCP 0
@@ -79,7 +81,30 @@
 
 // 10 = kualitas terbaik, 63 = terburuk. Angka lebih besar = frame lebih kecil
 // = lebih tahan terhadap sinyal lemah.
-#define CAM_JPEG_QUALITY 12
+//
+// Diturunkan satu tingkat dari 12 ke 16. Frame biasanya menyusut sekitar
+// 25-30%, jadi lebih sedikit data yang harus lewat WiFi tiap frame -- itu
+// mengurangi rebutan bandwidth dengan paket kendali, dan biasanya terlihat
+// sebagai fps naik plus stutter berkurang. Detail halus sedikit berkurang,
+// tapi untuk mengemudi hampir tidak terasa.
+#define CAM_JPEG_QUALITY 16
+
+// Orientasi gambar. Dua saklar independen, bukan satu "rotasi", karena
+// sensor memang hanya mengenal dua operasi: balik vertikal dan cermin
+// horizontal. Kombinasinya menutup keempat orientasi yang mungkin:
+//
+//   VFLIP  HMIRROR   hasil
+//     0       0      normal
+//     1       1      diputar 180 derajat
+//     0       1      dicerminkan kiri-kanan
+//     1       0      diputar 180 derajat LALU dicerminkan  <-- dipakai sekarang
+//
+// Keduanya dikerjakan OLEH SENSOR, bukan oleh ESP32 dan bukan oleh sisi
+// darat: sensor sekadar membaca larik pikselnya dengan urutan berbeda.
+// Jadi benar-benar gratis -- tidak ada tambahan latensi, tidak ada CPU
+// terpakai, ukuran JPEG tidak berubah.
+#define CAM_VFLIP 1
+#define CAM_HMIRROR 0
 
 #define SERIAL_BAUD 115200
 
@@ -261,9 +286,14 @@ static bool startCamera() {
     // mengemudi di dalam ruangan.
     sensor->set_brightness(sensor, 1);
     sensor->set_saturation(sensor, 0);
-    // Balik gambar kalau kamera Anda terpasang terbalik di sasis.
-    // sensor->set_vflip(sensor, 1);
-    // sensor->set_hmirror(sensor, 1);
+
+    // Orientasi gambar. Tabel kombinasinya ada di dekat CAM_VFLIP di atas.
+    // Selalu ditulis ke sensor, termasuk saat nilainya 0, supaya tidak
+    // bergantung pada nilai bawaan sensor yang bisa berbeda antar modul.
+    sensor->set_vflip(sensor, CAM_VFLIP);
+    sensor->set_hmirror(sensor, CAM_HMIRROR);
+    Serial.printf("[CAM] orientasi: vflip=%d hmirror=%d\n",
+                  CAM_VFLIP, CAM_HMIRROR);
   }
   return true;
 }
@@ -348,7 +378,11 @@ void loop() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("[CAM] WiFi terputus, menyambung ulang...");
     WiFi.reconnect();
-    delay(1000);
+    // Jeda 8 detik, BUKAN sekadar jeda loop biasa. Satu kali autentikasi
+    // WiFi butuh 1-3 detik untuk selesai atau gagal; memanggil reconnect()
+    // lagi sebelum itu selesai membuat driver ESP32 membanjiri Serial
+    // dengan "wifi:sta is connecting, return error" / "cannot set config".
+    delay(8000);
     return;
   }
 

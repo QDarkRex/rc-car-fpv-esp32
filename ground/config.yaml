@@ -7,23 +7,31 @@
 # itu ada di calibration.yaml yang dihasilkan calibrate.py.
 
 network:
-  # IP statis mobil. Nilai default cocok untuk Windows Mobile Hotspot yang
-  # selalu memakai subnet 192.168.137.x dengan gateway .1
+  # IP statis mobil. Router GL.iNet memakai subnet 192.168.8.x dengan
+  # gateway .1 dan DHCP otomatis di rentang .100-.249.
   # Harus sama dengan CAR_IP di firmware/rc_car_esp32/config.h
-  car_ip: 192.168.137.50
+  car_ip: 192.168.8.50
   car_port: 4210
 
   # Dipakai hanya sebagai cadangan selama mobil belum membalas, kalau-kalau
   # subnet ternyata berbeda dari dugaan. Setelah mobil membalas sekali,
   # aplikasi mengunci ke alamat unicast-nya.
-  broadcast: 192.168.137.255
+  broadcast: 192.168.8.255
 
   control_rate_hz: 50      # laju kirim perintah; 50 Hz = tiap 20 ms
   link_timeout_ms: 500     # telemetri hilang selama ini -> tautan dianggap putus
 
+  # Otomatis disarm saat telemetri putus. DIMATIKAN, sepasang dengan
+  # FAILSAFE_ENABLED 0 di firmware -- kalau cuma salah satu yang dimatikan,
+  # sisi yang lain tetap akan menghentikan mobil dan Anda akan bingung kenapa.
+  #
+  # Dengan false: banner FAILSAFE masih muncul sebagai INFORMASI kalau
+  # telemetri hilang, tapi mobil tidak di-disarm dan tetap menerima perintah.
+  disarm_on_link_loss: false
+
 camera:
   # Harus sama dengan CAM_IP di firmware/rc_cam_esp32
-  stream_url: http://192.168.137.60/stream
+  stream_url: http://192.168.8.60/stream
   timeout_s: 3.0
 
 steering:
@@ -35,12 +43,22 @@ steering:
 
 throttle:
   deadzone: 0.05
-  expo: 0.40
 
-  # BATAS KECEPATAN. Untuk uji coba pertama kali, turunkan max_forward ke 0.3
-  # dan naikkan bertahap setelah yakin kendali dan failsafe berjalan benar.
-  max_forward: 0.30
-  max_reverse: 0.50
+  # expo 0 = linear. Diturunkan dari 0.40 karena pita duty yang benar-benar
+  # menggerakkan mobil tinggal sempit (900-1023 dari 1023). Expo memampatkan
+  # bagian bawah pedal, dan di pita sesempit ini itu berarti membuang resolusi
+  # yang justru paling dibutuhkan. Naikkan lagi kalau nanti Vs dinaikkan atau
+  # driver diganti ke TB6612FNG, sehingga pitanya kembali lebar.
+  expo: 0.0
+
+  # BATAS KECEPATAN, dibuka penuh (0-1).
+  #
+  # Membatasi di sini sudah tidak ada gunanya: yang membatasi kecepatan
+  # sekarang adalah hardware, bukan angka ini. Vs L298N hanya 5 V untuk motor
+  # 5-6 V, jadi setelah drop L298N ~2,5 V motor cuma menerima ~2,5 V pada duty
+  # penuh. Menahan di 0.30 justru membuat motor tidak mau berputar sama sekali.
+  max_forward: 1.00
+  max_reverse: 1.00
 
   # Batas perubahan gas per detik. 3.0 berarti dari diam ke gas penuh butuh
   # sekitar 0,33 detik. Mencegah sentakan arus yang menjatuhkan tegangan

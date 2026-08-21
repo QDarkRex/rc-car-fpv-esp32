@@ -35,6 +35,18 @@ class Drive {
   uint16_t servoMicros() const { return _servoUs; }
   int8_t direction() const { return _direction; }
 
+  // Duty PWM yang benar-benar sedang keluar di pin ENA. Dipakai konsol
+  // serial untuk membedakan "ESP32 tidak mengirim apa-apa" dari "ESP32
+  // mengirim penuh tapi motor tetap diam" -- dua masalah yang sangat
+  // berbeda penyebabnya.
+  uint32_t motorDuty() const;
+
+  // KHUSUS DIAGNOSTIK. Menulis lebar pulsa servo langsung, melewati seluruh
+  // pemetaan steer, untuk mencari SERVO_MIN_US/SERVO_MAX_US secara empiris.
+  // Batas mekanis di writeServoMicros() TETAP berlaku, jadi ini tidak bisa
+  // dipakai untuk menabrakkan servo ke ujung linkage.
+  void testServoMicros(uint16_t micros) { writeServoMicros(micros); }
+
  private:
   void applyMotorOutput(int8_t wantDirection, uint32_t magnitude);
   void applyBrakeOutput(uint8_t brake);

@@ -16,12 +16,13 @@
 #define WIFI_SSID "RCCar"
 #define WIFI_PASS "admin.admin"
 
-// IP statis. Nilai default cocok untuk Windows Mobile Hotspot yang selalu
-// memakai subnet 192.168.137.x dengan gateway .1
+// IP statis. Router GL.iNet memakai subnet 192.168.8.x dengan gateway .1
+// dan DHCP otomatis di rentang .100-.249 -- .50 dipilih supaya tidak
+// bentrok dengan perangkat lain yang dapat IP otomatis.
 // Harus sama dengan network.car_ip di ground/config.yaml
 #define CAR_IP_1 192
 #define CAR_IP_2 168
-#define CAR_IP_3 137
+#define CAR_IP_3 8
 #define CAR_IP_4 50
 
 #define GATEWAY_IP_4 1              // gateway = x.x.x.1
@@ -31,7 +32,13 @@
 // memakai router biasa yang subnetnya bukan 192.168.137.x
 #define USE_DHCP 0
 
-#define WIFI_RETRY_MS 500           // jeda antar percobaan sambung ulang
+// Jeda antar percobaan sambung ulang. JANGAN dibuat pendek: satu kali
+// autentikasi WiFi butuh 1-3 detik untuk selesai atau gagal. Kalau
+// WiFi.reconnect() dipanggil sebelum percobaan sebelumnya selesai, driver
+// ESP32 akan membanjiri Serial dengan "wifi:sta is connecting, return
+// error" lalu "cannot set config" -- bukan berarti SSID/password salah,
+// murni karena percobaan lama dan baru bertabrakan.
+#define WIFI_RETRY_MS 8000
 
 // ----------------------------------------------------------------- pin
 
@@ -67,13 +74,58 @@
 
 // Di bawah nilai perintah ini motor dianggap berhenti. Motor DC lewat L298N
 // tidak akan berputar pada duty rendah -- hanya mendengung dan panas.
-#define MOTOR_DEADBAND 60           // dari skala 0..1000
+// Arah putaran motor. Set 1 kalau maju/mundur terbalik.
+//
+// TERUKUR di hardware ini: dengan MOTOR_INVERT 0, perintah maju justru
+// membuat mobil mundur. Membaliknya di sini AMAN dan setara dengan menukar
+// kabel OUT1/OUT2 -- rem (IN1=IN2=HIGH) dan coast (IN1=IN2=LOW) sama-sama
+// simetris, jadi tidak terpengaruh arah, dan jeda balik arah juga tidak
+// peduli arah mana yang disebut "maju".
+#define MOTOR_INVERT 1
+
+// Ambang nyala motor, skala 0..1000. Di mode biner (MOTOR_BINARY 1) inilah
+// titik pedal yang menyalakan motor, jadi perannya jauh lebih penting
+// daripada sekadar menolak getaran.
+//
+// Dinaikkan dari 40 ke 100: di mode biner, 40 berarti sentuhan pedal 4%
+// langsung memberi tenaga penuh -- terlalu mudah tersenggol. 100 (10% pedal)
+// menuntut tekanan yang disengaja tapi masih terasa responsif.
+#define MOTOR_DEADBAND 100
+
+// MODE 1/0. Motor hanya punya dua keadaan: mati, atau duty penuh.
+//
+// Dipilih karena gradasi kecepatan memang sudah tidak ada gunanya di
+// hardware ini. Vs L298N 5 V untuk motor 5-6 V menyisakan pita duty yang
+// benar-benar menggerakkan mobil hanya sekitar 900..1023 dari 1023 -- 12%
+// rentang PWM. Berpura-pura proporsional di pita sesempit itu hanya
+// menghasilkan perbedaan kecepatan yang tidak terasa, sekaligus membuat
+// mobil sering tidak mau jalan di separuh bawah pedal.
+//
+// Set 0 untuk kembali ke kendali proporsional. Itu baru masuk akal setelah
+// Vs dinaikkan ke ~7,5-8 V atau driver diganti ke TB6612FNG, karena saat itu
+// pita duty yang berguna kembali lebar.
+#define MOTOR_BINARY 1
 
 // Duty minimum saat motor MULAI bergerak. Rentang perintah yang berguna
 // dipetakan ke MOTOR_MIN_DUTY..MOTOR_PWM_MAX, bukan 0..MOTOR_PWM_MAX,
 // supaya sentuhan pertama pedal langsung memutar roda alih-alih mendengung.
-// Naikkan kalau motor Anda baru mau jalan di duty lebih tinggi.
-#define MOTOR_MIN_DUTY 300
+//
+// TERUKUR DUA KALI, dan angka keduanya yang dipakai:
+//   - roda di udara  : motor mulai berputar di duty ~716
+//   - roda di lantai : mobil baru benar-benar jalan di sekitar duty ~900
+//
+// Angka tanpa beban menyesatkan. Gesekan ban, gardan, dan berat mobil
+// menaikkan ambangnya jauh. Yang dipakai di sini adalah kondisi nyata
+// saat mengemudi, supaya pedal bagian bawah tidak lagi terasa mati.
+//
+// Angka setinggi ini BUKAN normal -- penyebabnya Vs L298N hanya 5 V untuk
+// motor 5-6 V, sehingga setelah drop L298N ~2,5 V motor cuma menerima
+// ~2,5 V pada duty penuh. Akibatnya hanya sekitar 30% rentang PWM yang
+// berguna, dan itu pula yang membuat kenaikan tegangan terasa tidak linear.
+// Perbaikan sebenarnya ada di hardware (naikkan Vs ke ~7,5-8 V, atau ganti
+// ke driver MOSFET seperti TB6612FNG yang drop-nya hanya ~0,5 V), bukan di
+// angka ini. Nilai ini membuat rentang yang tersisa tetap terpakai penuh.
+#define MOTOR_MIN_DUTY 900
 
 // Batas perubahan perintah motor per detik, dalam satuan skala 0..1000.
 // Ini lapis kedua setelah slew_rate di sisi darat -- sengaja dibuat lebih
@@ -115,14 +167,58 @@
 // demi sedikit sambil mendengarkan. Begitu servo mendengung menahan di ujung,
 // Anda sudah kelewatan -- mundur 50 us. Servo yang menahan di ujung akan
 // panas dan rusak dalam hitungan menit.
-#define SERVO_MIN_US 1100           // belok penuh ke satu sisi
-#define SERVO_CENTER_US 1500        // lurus
-#define SERVO_MAX_US 1900           // belok penuh ke sisi lain
+// Ketiganya TERUKUR di hardware lewat konsol serial, bukan tebakan:
+//   1200 us = mentok KANAN
+//   1400 us = lurus
+//   1600 us = mentok KIRI
+//
+// SIMETRIS: 200 us ke kiri, 200 us ke kanan. Ini hasil kalibrasi ulang
+// setelah linkage disetel; pengukuran sebelumnya (1250/1350/1500) tidak
+// simetris dan membuat radius belok kiri dan kanan berbeda. Sekarang
+// keduanya sama.
+//
+// drive.cpp tetap menghitung kedua sisi secara TERPISAH, jadi kalau suatu
+// saat linkage bergeser lagi dan hasilnya tidak simetris, tulis saja apa
+// adanya -- kodenya tidak mengasumsikan simetri.
+//
+// Cara mengukur ulang: konsol serial, "test on" lalu "servo <us>" naik/turun
+// bertahap sampai servo mendengung menahan di ujung, mundur 25 us dari titik
+// itu. Jangan lupa "test off" setelah selesai.
+#define SERVO_MIN_US 1200           // mentok KANAN
+#define SERVO_CENTER_US 1400        // lurus
+#define SERVO_MAX_US 1600           // mentok KIRI
+
+// Arah belok. Set 1 kalau stir kanan justru membelokkan roda ke kiri.
+//
+// TERUKUR di hardware ini: protokol memakai steer positif = kanan, dan
+// drive.cpp memetakan nilai positif ke SERVO_MAX_US (angka us lebih besar).
+// Tapi di sini KANAN justru ada di 1250 us -- angka lebih KECIL. Tanpa
+// pembalikan ini, stir kanan akan membelokkan roda ke kiri.
+//
+// Dibalik di firmware, bukan lewat steering.invert di config.yaml, karena
+// ini fakta pemasangan hardware mobil -- bukan preferensi rasa menyetir.
+// Biarkan steering.invert di sisi darat tetap bebas untuk keperluan lain.
+#define SERVO_INVERT 1
 
 // ----------------------------------------------------------------- failsafe
 
+// DIMATIKAN atas permintaan, karena mobil ini kecil, bertenaga rendah, dan
+// dipakai di track khusus. Set 1 untuk menyalakannya lagi.
+//
+// Saat 0: kalau paket kontrol berhenti, mobil MEMPERTAHANKAN perintah
+// terakhir tanpa batas waktu. Kalau tautan putus saat gas sedang ditekan,
+// mobil terus melaju dengan gas itu sampai paket kembali atau baterai
+// dicabut. Itu konsekuensi yang disengaja di sini, bukan kelalaian.
+//
+// Yang TIDAK ikut dimatikan: aturan arming. Mobil tetap menyala dalam
+// keadaan disarmed dan tetap butuh transisi flag ARMED 0->1 dari ground
+// station sebelum motor mau bergerak. Itu mekanisme terpisah dan tetap
+// berguna -- lihat docs/protocol.md bagian 5.
+#define FAILSAFE_ENABLED 0
+
 // Tidak ada paket kontrol valid selama ini -> motor netral, servo tengah,
-// status kembali disarmed. Harus sama dengan FAILSAFE_TIMEOUT di fake_car.py
+// status kembali disarmed. Hanya berlaku kalau FAILSAFE_ENABLED = 1.
+// Harus sama dengan FAILSAFE_TIMEOUT di fake_car.py
 #define FAILSAFE_TIMEOUT_MS 300
 
 // ----------------------------------------------------------------- baterai
@@ -144,4 +240,16 @@
 // ----------------------------------------------------------------- serial
 
 #define SERIAL_BAUD 115200
-#define SERIAL_STATUS_MS 500        // jeda cetak status; 0 untuk mematikan
+// Jeda cetak status berkala. 0 = MATI (default sekarang).
+//
+// Dimatikan bukan karena membebani -- satu baris status ~130 karakter di
+// 115200 baud memakan ~11 ms, dua kali per detik berarti sekitar 2% waktu
+// serial. Itu tidak akan membuat ESP32 kewalahan.
+//
+// Dimatikan karena sudah tidak perlu: konsol punya perintah "status" yang
+// mencetak keadaan lengkap saat Anda minta. Mencetak terus-menerus hanya
+// membuat Serial Monitor sulit dibaca saat Anda sedang mengetik perintah.
+//
+// Isi 500 (atau 200) kalau sedang melacak masalah dan ingin melihat nilai
+// berjalan tanpa mengetik apa-apa.
+#define SERIAL_STATUS_MS 0
