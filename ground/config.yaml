@@ -107,6 +107,6 @@ display:
 
 sfx:
   enabled: true            # matikan semua suara tanpa uninstall/hapus file
-  gas_pack: 0               # indeks pack gas aktif, 0 = "Racing motorcycle engine speeding up"
-  horn_pack: 0              # 0 = "Car horn"
-  arm_pack: 0               # 0 = "Car engine start"
+  gas_pack: 0               # indeks pack gas aktif, 0 = "Sports car accelerating (medium)"
+  horn_pack: 3              # 3 = "Truck horn"
+  arm_pack: 2               # 0 = "Car engine start"

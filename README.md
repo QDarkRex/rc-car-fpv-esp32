@@ -158,15 +158,22 @@ aplikasi ditutup, jadi tidak perlu dipilih ulang tiap sesi. Untuk mematikan
 semua suara tanpa menghapus berkasnya, set `sfx.enabled: false` di
 `config.yaml`.
 
-Klakson bisa dipicu dari tombol keyboard `H` (ditahan) atau dari tombol
-fisik di stir. Tombol fisik untuk klakson dikalibrasi lewat `calibrate.py` —
-langkah barunya muncul tepat setelah langkah kalibrasi tombol stop darurat,
-dengan wizard yang sama seperti langkah arm/estop.
+Klakson bisa dipicu dari tombol keyboard `H` (satu kali tekan = satu kali
+bunyi, bukan loop) atau dari tombol fisik di stir. Tombol fisik untuk
+klakson dikalibrasi lewat `calibrate.py` — langkah barunya muncul tepat
+setelah langkah kalibrasi tombol stop darurat, dengan wizard yang sama
+seperti langkah arm/estop.
 
-Berkas suara berasal dari Mixkit (mixkit.co), lisensi *Mixkit Free
-License* — bebas dipakai personal maupun komersial dan tidak wajib
-atribusi. Lihat `ground/assets/sfx/manifest.yaml` untuk daftar lengkap
-judul dan sumbernya.
+Berkas suara berasal dari dua sumber, lisensinya beda per kategori — lihat
+`ground/assets/sfx/manifest.yaml` untuk daftar lengkap judul dan sumbernya:
+
+- **klakson & arm**: Mixkit (mixkit.co), lisensi *Mixkit Free License* —
+  bebas dipakai personal maupun komersial, tidak wajib atribusi.
+- **gas**: Freesound.org, campuran CC0 dan **CC BY 4.0** (wajib atribusi).
+  Kredit untuk berkas CC BY 4.0: EvanBoyerman ("Sports car accelerating"
+  medium & fast), jimmygu3 ("V8 Lotus sports car engine revs"),
+  jerry.berumen ("Land Rover sport V6 revving"), zagi2 ("Rev up loop"),
+  Debsound ("Rally car idle loop") — seluruhnya dari Freesound.org.
 
 ---
 

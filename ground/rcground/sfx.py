@@ -42,8 +42,6 @@ CATEGORIES = ("gas", "horn", "arm")
 GAS_VOLUME_MIN = 0.4
 GAS_VOLUME_MAX = 1.0
 
-FADE_MS = 120   # fade out halus saat gas berhenti -- lihat update_gas
-
 
 def _sfx_root() -> Path:
     """Cari folder assets/sfx/, aman baik sebagai skrip maupun exe frozen.
@@ -98,6 +96,11 @@ class SfxEngine:
         self._channel_arm = None
 
         self._gas_active = False
+        # Pack yang SEDANG dimuat/dijeda di channel gas (bukan pack aktif di
+        # self._index -- keduanya bisa beda kalau pengguna ganti pack pakai
+        # G/Shift+G sementara gas dijeda). Dipakai update_gas() untuk
+        # membedakan "lanjutkan dari jeda" vs "mulai pack baru dari awal".
+        self._gas_current_pack = None
 
         if not enabled:
             # Dimatikan dengan sengaja lewat config -- bukan error, jadi
@@ -246,13 +249,31 @@ class SfxEngine:
             intensity = max(0.0, min(1.0, intensity))
             volume = GAS_VOLUME_MIN + intensity * (GAS_VOLUME_MAX - GAS_VOLUME_MIN)
             if not self._gas_active:
-                self._channel_gas.play(pack.sound, loops=-1)
+                if pack is self._gas_current_pack and self._channel_gas.get_busy():
+                    # Gas dilepas lalu diinjak lagi TANPA ganti pack di
+                    # antaranya -- lanjutkan dari posisi terjeda alih-alih
+                    # play() ulang dari awal. Suara "accelerating" yang
+                    # dipakai sekarang punya build-up di depan; mengulang
+                    # dari nol tiap kali gas diinjak-lepas-injak terasa
+                    # patah-patah, jadi ini dijeda (pause), bukan
+                    # dihentikan (stop), saat pedal dilepas -- lihat cabang
+                    # elif di bawah.
+                    self._channel_gas.unpause()
+                else:
+                    # Pack baru (pengguna ganti lewat G/Shift+G) atau memang
+                    # baru pertama kali gas diinjak sejak start -- mulai
+                    # dari awal seperti biasa.
+                    self._channel_gas.stop()
+                    self._channel_gas.play(pack.sound, loops=-1)
+                    self._gas_current_pack = pack
                 self._gas_active = True
             self._channel_gas.set_volume(volume)
         elif self._gas_active:
-            # Fade out halus alih-alih stop mendadak -- stop() langsung
-            # membuat suara terputus kasar begitu pedal dilepas.
-            self._channel_gas.fadeout(FADE_MS)
+            # pause(), BUKAN stop()/fadeout() -- menahan posisi putar supaya
+            # injakan gas berikutnya (kalau pack tidak diganti) melanjutkan
+            # dari sini, bukan mengulang dari awal. Lihat cabang unpause()
+            # di atas.
+            self._channel_gas.pause()
             self._gas_active = False
 
     # -- klakson -----------------------------------------------------------
