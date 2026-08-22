@@ -11,24 +11,33 @@
 # bukan dari halaman sumber -- jadi dijamin akurat.
 
 gas:
-  - file: racing_moto_speedup_1.mp3
-    title: "Racing motorcycle engine speeding up"
-    duration_s: 9.27
-  - file: racing_moto_speedup_2.mp3
-    title: "Racing motorcycle speeding up"
-    duration_s: 5.62
-  - file: sports_bike_engine.mp3
-    title: "Sports bike engine"
-    duration_s: 14.26
-  - file: motorcycle_engine_working.mp3
-    title: "Motorcycle engine working"
-    duration_s: 2.74
-  - file: fast_car_drive_by.mp3
-    title: "Fast car drive by"
-    duration_s: 3.81
-  - file: motocross_engine.mp3
-    title: "Motocross motorcycle engine"
-    duration_s: 19.88
+  - file: truck_accelerating.mp3
+    title: "Truck accelerating"
+    duration_s: 10.50
+  - file: truck_accelerates_2.mp3
+    title: "Truck accelerates (versi lain)"
+    duration_s: 9.04
+  - file: truck_driving_steady.mp3
+    title: "Truck driving steady"
+    duration_s: 9.80
+  - file: truck_start_engine.mp3
+    title: "Truck start engine"
+    duration_s: 9.04
+  - file: tractor_driving_away.mp3
+    title: "Tractor driving away"
+    duration_s: 11.62
+  - file: tractor_passing_by.mp3
+    title: "Tractor passing by"
+    duration_s: 25.36
+  - file: construction_machine_motor.mp3
+    title: "Construction machine motor passing"
+    duration_s: 33.65
+  - file: atv_engine_hum.mp3
+    title: "ATV engine motor hum"
+    duration_s: 34.46
+  - file: tank_engine_working.mp3
+    title: "Tank engine working"
+    duration_s: 15.49
 
 horn:
   - file: car_horn.mp3

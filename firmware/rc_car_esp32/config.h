@@ -108,19 +108,23 @@
 // menuntut tekanan yang disengaja tapi masih terasa responsif.
 #define MOTOR_DEADBAND 100
 
-// MODE 1/0. Motor hanya punya dua keadaan: mati, atau duty penuh.
+// Kendali PROPORSIONAL (default). Motor mengikuti tekanan pedal secara
+// bertahap lewat pemetaan MOTOR_MIN_DUTY..MOTOR_PWM_MAX di applyMotorOutput().
 //
-// Dipilih karena gradasi kecepatan memang sudah tidak ada gunanya di
-// hardware ini. Vs L298N 5 V untuk motor 5-6 V menyisakan pita duty yang
-// benar-benar menggerakkan mobil hanya sekitar 900..1023 dari 1023 -- 12%
-// rentang PWM. Berpura-pura proporsional di pita sesempit itu hanya
-// menghasilkan perbedaan kecepatan yang tidak terasa, sekaligus membuat
-// mobil sering tidak mau jalan di separuh bawah pedal.
+// Riwayat: mode ini sempat diganti ke MODE 1/0 (MOTOR_BINARY 1, motor hanya
+// mati atau duty penuh) karena Vs L298N 5 V untuk motor 5-6 V menyisakan
+// pita duty yang benar-benar menggerakkan mobil hanya sekitar 900..1023 dari
+// 1023 -- 12% rentang PWM. Berpura-pura proporsional di pita sesempit itu
+// hanya menghasilkan perbedaan kecepatan yang tidak terasa, sekaligus
+// membuat mobil sering tidak mau jalan di separuh bawah pedal. Alasan itu
+// masih valid untuk hardware ini kalau suatu saat perlu dipakai lagi.
 //
-// Set 0 untuk kembali ke kendali proporsional. Itu baru masuk akal setelah
-// Vs dinaikkan ke ~7,5-8 V atau driver diganti ke TB6612FNG, karena saat itu
-// pita duty yang berguna kembali lebar.
-#define MOTOR_BINARY 1
+// Set 1 untuk kembali ke mode biner itu. Set 0 (sekarang) untuk proporsional
+// -- pilihan yang lebih masuk akal setelah Vs dinaikkan ke ~7,5-8 V atau
+// driver diganti ke TB6612FNG, karena saat itu pita duty yang berguna
+// kembali lebar. Kalau dipakai lagi di hardware lama (Vs masih 5 V), pita
+// sempit di atas kemungkinan akan terasa lagi -- itu bukan bug.
+#define MOTOR_BINARY 0
 
 // Duty minimum saat motor MULAI bergerak. Rentang perintah yang berguna
 // dipetakan ke MOTOR_MIN_DUTY..MOTOR_PWM_MAX, bukan 0..MOTOR_PWM_MAX,
@@ -167,6 +171,17 @@
 // ke BRAKE_MIN_DUTY..MOTOR_PWM_MAX, bukan 0..MOTOR_PWM_MAX, supaya sentuhan
 // pertama pedal rem langsung menghubung-singkat motor, bukan mendengung.
 #define BRAKE_MIN_DUTY 300
+
+// Durasi maksimum pulsa dorong-balik (reverse pulse / "plugging") saat rem
+// diinjak ketika mobil sedang bergerak. Mobil ini TIDAK punya sensor
+// kecepatan roda, jadi tidak ada cara untuk tahu kapan mobil benar-benar
+// berhenti -- satu-satunya pengaman yang tersedia murni berbasis waktu:
+// dorong sebentar ke arah berlawanan lalu paksa coast (OFF), mengandalkan
+// durasi pendek + inersia mobil supaya ia melambat tanpa sempat benar-benar
+// membalik arah gerak. JANGAN naikkan angka ini sembarangan -- makin lama
+// pulsa mundur diberikan, makin besar risiko mobil benar-benar bergerak
+// mundur sungguhan, bukan sekadar mengerem.
+#define BRAKE_REVERSE_PULSE_MS 500
 
 // ----------------------------------------------------------------- servo
 

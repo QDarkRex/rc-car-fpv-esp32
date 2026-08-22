@@ -42,7 +42,7 @@ CATEGORIES = ("gas", "horn", "arm")
 GAS_VOLUME_MIN = 0.4
 GAS_VOLUME_MAX = 1.0
 
-FADE_MS = 120   # fade out halus saat gas/klakson berhenti -- lihat update_gas/trigger_horn
+FADE_MS = 120   # fade out halus saat gas berhenti -- lihat update_gas
 
 
 def _sfx_root() -> Path:
@@ -98,7 +98,6 @@ class SfxEngine:
         self._channel_arm = None
 
         self._gas_active = False
-        self._horn_held = False
 
         if not enabled:
             # Dimatikan dengan sengaja lewat config -- bukan error, jadi
@@ -257,17 +256,20 @@ class SfxEngine:
             self._gas_active = False
 
     # -- klakson -----------------------------------------------------------
-    def trigger_horn(self, held: bool) -> None:
-        """held True selama tombol klakson ditahan (stir fisik atau tombol H)."""
+    def play_horn(self) -> None:
+        """Putar suara klakson SEKALI dari awal sampai selesai.
+
+        Dipanggil pada TIAP tekan klakson (edge, bukan level -- lihat
+        horn_edge di wheel.py dan keyboard_horn_edge di main.py), seperti
+        klakson mobil sungguhan yang di-"pip" sekali per tekan. Kalau
+        ditekan lagi sebelum suara sebelumnya selesai, hentikan yang lama
+        dan mulai lagi dari awal -- tidak menumpuk suara. Bergaya sama
+        seperti play_arm() di atas.
+        """
         if not self._enabled:
             return
         pack = self._current("horn")
         if pack is None:
             return
-
-        if held and not self._horn_held:
-            self._channel_horn.play(pack.sound, loops=-1)
-            self._horn_held = True
-        elif not held and self._horn_held:
-            self._channel_horn.fadeout(FADE_MS)
-            self._horn_held = False
+        self._channel_horn.stop()
+        self._channel_horn.play(pack.sound)

@@ -81,7 +81,7 @@ class WheelState:
     gear_label: str = "N"        # "R", "N", "1".."6"
     arm_edge: bool = False      # True hanya pada frame tombol arm ditekan
     estop_held: bool = False
-    horn_held: bool = False     # True selama tombol klakson pada stir ditahan
+    horn_edge: bool = False     # True hanya pada frame tombol klakson pada stir BARU ditekan
     connected: bool = False
     source: str = "none"
     buttons: dict = field(default_factory=dict)
@@ -99,6 +99,7 @@ class Wheel:
         self.name = "(tidak ada)"
 
         self._prev_arm = False
+        self._prev_horn = False
         self._throttle_out = 0.0
         self._trim = float(tuning.get("steering", {}).get("trim", 0.0))
 
@@ -270,7 +271,12 @@ class Wheel:
         # .get("horn") aman kembalikan None kalau calibration.yaml lama belum
         # punya kunci ini (pengguna belum kalibrasi ulang lewat calibrate.py)
         # -- dan button(None) di atas sudah menangani None -> False.
-        state.horn_held = button(buttons_cfg.get("horn"))
+        # Edge-detection sama persis polanya dengan arm_edge di atas: klakson
+        # SEKALI tekan = SEKALI putar suara (lihat SfxEngine.play_horn di
+        # sfx.py), bukan loop selama tombol ditahan.
+        horn_now = button(buttons_cfg.get("horn"))
+        state.horn_edge = horn_now and not self._prev_horn
+        self._prev_horn = horn_now
         state.buttons = {i: js.get_button(i) for i in range(js.get_numbuttons())}
 
         gear = self._read_gear(js) if self.shifter_enabled else 0

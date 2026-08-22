@@ -36,6 +36,8 @@ void Drive::neutral() {
   _targetBrake = 0;
   _direction = 0;
   _braking = false;
+  _brakeDirection = 0;
+  _brakePulseStartMs = 0;
   coast();
   writeServoMicros(SERVO_CENTER_US);
 }
@@ -94,25 +96,59 @@ void Drive::update() {
   delta = constrain(delta, -maxDelta, maxDelta);
   _appliedThrottle = (int16_t)((int32_t)_appliedThrottle + delta);
 
-  // --- prioritas 1: rem. Menang atas throttle setiap kali brake di atas
-  // ambang -- lihat docs/protocol.md soal kenapa rem punya field sendiri.
+  // --- prioritas 1: rem, sebagai "reverse pulse" (plugging): dorong
+  // sebentar ke arah BERLAWANAN dari arah gerak sebelum rem diinjak, lalu
+  // paksa coast. Menang atas throttle setiap kali brake di atas ambang --
+  // lihat docs/protocol.md soal kenapa rem punya field sendiri.
   if (wantBrake) {
     if (now < _reverseGuardUntilMs) {
       coast();
       return;
     }
-    if (!_braking && _direction != 0) {
-      // Sedang bergerak lalu rem diinjak: matikan H-bridge dulu dan beri
-      // jeda balik arah sebelum IN1/IN2 sama-sama HIGH. Tanpa jeda ini,
-      // transisi dari satu sisi HIGH langsung ke dua-duanya HIGH berisiko
-      // shoot-through yang sama seperti berbalik arah biasa.
-      coast();
+    if (!_braking) {
+      // Baru masuk mode rem: catat arah gerak SEBELUM direm -- ini yang
+      // menentukan arah pulsa dorong-balik nanti, bukan _direction yang
+      // sebentar lagi dinolkan.
+      _brakeDirection = _direction;
       _direction = 0;
-      _reverseGuardUntilMs = now + REVERSE_GUARD_MS;
+      _braking = true;
+      if (_brakeDirection != 0) {
+        // Mobil memang sedang bergerak: matikan H-bridge dulu dan beri jeda
+        // balik arah sebelum mulai mendorong ke arah berlawanan. Tanpa jeda
+        // ini, transisi dari satu sisi HIGH langsung ke arah kebalikannya
+        // berisiko shoot-through yang sama seperti berbalik arah biasa.
+        coast();
+        _reverseGuardUntilMs = now + REVERSE_GUARD_MS;
+        // Belum mulai menghitung pulsa -- baru dimulai iterasi berikutnya,
+        // setelah guard di atas selesai. Lihat cabang _braking di bawah.
+        _brakePulseStartMs = 0;
+        return;
+      }
+      // Mobil sudah diam saat rem diinjak: TIDAK PERNAH ada pulsa mundur.
+      // Cukup coast, tidak ada apa pun untuk "diperlambat".
+      coast();
       return;
     }
-    applyBrakeOutput(_targetBrake);
-    _braking = true;
+    if (_brakeDirection == 0) {
+      // Sudah dalam mode rem tapi mobil memang sudah diam sejak awal: tetap
+      // diam, tidak ada pulsa.
+      coast();
+      return;
+    }
+    // Sudah dalam mode rem, mobil sedang diperlambat lewat reverse pulse.
+    if (_brakePulseStartMs == 0) {
+      _brakePulseStartMs = now;
+    }
+    if (now - _brakePulseStartMs >= BRAKE_REVERSE_PULSE_MS) {
+      // Jendela pulsa sudah habis. BERHENTI mendorong mundur -- durasi
+      // pendek + inersia sudah cukup untuk memperlambat mobil tanpa
+      // benar-benar membalik arah gerak; mendorong lebih lama dari ini
+      // hanya menambah risiko mobil benar-benar mundur. Cukup diam sampai
+      // rem dilepas.
+      coast();
+      return;
+    }
+    applyBrakeOutput(_targetBrake, _brakeDirection);
     return;
   }
 
@@ -122,6 +158,8 @@ void Drive::update() {
     coast();
     _braking = false;
     _direction = 0;
+    _brakeDirection = 0;
+    _brakePulseStartMs = 0;
     _reverseGuardUntilMs = now + REVERSE_GUARD_MS;
     return;
   }
@@ -203,16 +241,39 @@ void Drive::applyMotorOutput(int8_t wantDirection, uint32_t magnitude) {
 #endif
 }
 
-void Drive::applyBrakeOutput(uint8_t brake) {
-  // IN1=IN2=HIGH menghubung-singkat kedua terminal motor lewat L298N,
-  // yang mengerem motor secara dinamis. Duty di ENA menentukan seberapa
-  // "rapat" hubung-singkat itu, jadi seberapa kuat pengereman terasa.
-  digitalWrite(PIN_IN1, HIGH);
-  digitalWrite(PIN_IN2, HIGH);
+void Drive::applyBrakeOutput(uint8_t brake, int8_t originalDirection) {
+  // Reverse pulse (plugging): alih-alih menghubung-singkat motor
+  // (IN1=IN2=HIGH), sisi ini mendorong motor ke arah BERLAWANAN dari
+  // originalDirection -- arah mobil TEPAT SEBELUM rem diinjak. Ini yang
+  // membuat rem terasa lebih tegas daripada short-brake biasa. Durasi
+  // dorongan ini dibatasi ketat di update() (BRAKE_REVERSE_PULSE_MS di
+  // config.h) supaya mobil melambat tanpa sempat benar-benar berbalik arah.
+  //
+  // Sama seperti applyMotorOutput(), MOTOR_INVERT harus dihormati di sini
+  // supaya arah fisik "lawan arah" konsisten dengan pembalikan yang sama
+  // yang dipakai untuk maju/mundur normal -- jangan hardcode HIGH/LOW tanpa
+  // mempertimbangkan MOTOR_INVERT.
+  // Ini persis pemetaan MOTOR_INVERT di applyMotorOutput(), diterapkan pada
+  // ARAH LAWAN dari originalDirection (bukan originalDirection itu sendiri)
+  // -- makanya perbandingannya tampak "terbalik" dibanding applyMotorOutput.
+#if MOTOR_INVERT
+  const bool forward = (originalDirection > 0);
+#else
+  const bool forward = (originalDirection < 0);
+#endif
+  if (forward) {
+    digitalWrite(PIN_IN1, HIGH);
+    digitalWrite(PIN_IN2, LOW);
+  } else {
+    digitalWrite(PIN_IN1, LOW);
+    digitalWrite(PIN_IN2, HIGH);
+  }
 
   // Pemetaan rentang berguna, sama polanya dengan applyMotorOutput(): dari
   // BRAKE_DEADBAND..255 ke BRAKE_MIN_DUTY..MOTOR_PWM_MAX, supaya sentuhan
-  // pertama pedal rem langsung terasa alih-alih hanya mendengung.
+  // pertama pedal rem langsung terasa alih-alih hanya mendengung. Pemetaan
+  // ini TIDAK berubah dari versi short-brake -- hanya arah H-bridge di atas
+  // yang berubah.
   const uint32_t span = 255 - BRAKE_DEADBAND;
   uint32_t usable = brake > BRAKE_DEADBAND ? (uint32_t)brake - BRAKE_DEADBAND : 0;
   uint32_t duty = BRAKE_MIN_DUTY +

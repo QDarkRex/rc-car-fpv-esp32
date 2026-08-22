@@ -49,7 +49,12 @@ class Drive {
 
  private:
   void applyMotorOutput(int8_t wantDirection, uint32_t magnitude);
-  void applyBrakeOutput(uint8_t brake);
+  // originalDirection: arah mobil TEPAT SEBELUM rem diinjak (-1/0/+1). Duty
+  // dipetakan dari besaran brake seperti biasa, tapi IN1/IN2 diarahkan ke
+  // LAWAN dari originalDirection -- ini bagian "reverse pulse" (plugging).
+  // Lihat update() dan BRAKE_REVERSE_PULSE_MS di config.h untuk mekanisme
+  // dan batas waktu pulsa ini.
+  void applyBrakeOutput(uint8_t brake, int8_t originalDirection);
   void writeServoMicros(uint16_t micros);
   void coast();
 
@@ -62,4 +67,13 @@ class Drive {
   bool _braking = false;
   uint32_t _lastUpdateMs = 0;
   uint32_t _reverseGuardUntilMs = 0;
+
+  // Arah mobil TEPAT SEBELUM rem diinjak (-1/0/+1). Dipakai untuk menentukan
+  // arah pulsa dorong-balik (reverse pulse) saat mengerem -- kalau mobil
+  // sudah diam (0) saat rem diinjak, tidak pernah ada pulsa mundur sama
+  // sekali, cukup coast. Lihat update() di drive.cpp.
+  int8_t _brakeDirection = 0;
+  // Kapan pulsa dorong-balik mulai dihitung (millis()). 0 berarti belum
+  // mulai -- baru diisi begitu REVERSE_GUARD_MS di awal rem selesai.
+  uint32_t _brakePulseStartMs = 0;
 };
