@@ -19,6 +19,15 @@ ground/dist/
 ground/build_pyinstaller/
 *.spec
 
+# Config per-mesin -- unit:, kalibrasi stir, dll. berbeda di TIAP LattePanda.
+# Ikut ter-track dulu, sekarang sengaja dikeluarkan supaya `git pull` di tiap
+# mesin tidak bentrok dengan config lokalnya. Template ada di
+# ground/config.example.yaml (di-track) -- salin jadi config.yaml sekali di
+# tiap mesin. calibration.yaml tidak perlu template, cukup jalankan
+# Kalibrasi.exe / calibrate.py sekali di tiap mesin, itu yang membuatnya.
+ground/config.yaml
+ground/calibration.yaml
+
 # Berkas kunci sementara Microsoft Office
 ~$*
 

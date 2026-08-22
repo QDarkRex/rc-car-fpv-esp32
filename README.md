@@ -177,6 +177,39 @@ Berkas suara berasal dari dua sumber, lisensinya beda per kategori — lihat
 
 ---
 
+## Menjalankan langsung dari git (tanpa .exe)
+
+Cocok untuk LattePanda yang sering di-update (tinggal `git pull`, tidak perlu
+build ulang tiap kali kode berubah) atau kalau tidak ada media untuk
+menyalin folder `dist/` (flashdisk, dll).
+
+```bash
+git clone https://github.com/QDarkRex/rc-car-fpv-esp32.git
+cd rc-car-fpv-esp32/ground
+pip install -r requirements.txt
+copy config.example.yaml config.yaml
+```
+
+Lalu edit `config.yaml` yang baru disalin: ubah `unit:` sesuai mobil yang
+dikendalikan LattePanda ini (lihat [Kalibrasi stir](#kalibrasi-stir) di atas
+untuk langkah kalibrasi, dan bagian [Balapan dengan 3
+mobil](#balapan-dengan-3-mobil) untuk skema unit 1/2/3).
+
+`config.yaml` dan `calibration.yaml` sengaja **TIDAK** ikut ter-*track* git
+(lihat `.gitignore`) — keduanya murni pengaturan per-mesin (nomor unit,
+kalibrasi stir fisik). Kalau ikut ter-*track*, `git pull` berikutnya akan
+bentrok dengan perubahan lokal Anda. Jalankan `python calibrate.py` sekali
+untuk membuat `calibration.yaml` sendiri, lalu jalankan dengan:
+
+```bash
+python main.py
+```
+
+Update berikutnya cukup `git pull` dari folder ini, tanpa menyentuh
+`config.yaml`/`calibration.yaml` milik mesin ini sama sekali.
+
+---
+
 ## Membuat .exe (LattePanda Windows)
 
 Untuk dipakai di lapangan tanpa perlu menginstal Python di tiap LattePanda:

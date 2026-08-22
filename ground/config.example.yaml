@@ -1,3 +1,9 @@
+# TEMPLATE -- salin berkas ini jadi config.yaml sekali per LattePanda
+# (config.yaml sendiri sengaja TIDAK di-track git, lihat .gitignore, supaya
+# `git pull` tidak menimpa unit:/tuning lokal tiap mesin):
+#
+#   copy config.example.yaml config.yaml
+#
 # Konfigurasi ground station RC Car
 #
 # Semua yang ada di berkas ini diterapkan di SISI DARAT. Mengubahnya cukup
