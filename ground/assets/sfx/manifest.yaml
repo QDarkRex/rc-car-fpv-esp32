@@ -1,0 +1,71 @@
+# Manifes berkas SFX -- dibuat otomatis saat pengunduhan awal, jangan diedit
+# manual kecuali menambah/mengganti berkas suara.
+#
+# Sumber: Mixkit (mixkit.co), lisensi Mixkit Free License -- bebas dipakai
+# personal maupun komersial, TIDAK wajib atribusi, tidak boleh dijual ulang
+# berkas suaranya sendiri sebagai produk berdiri sendiri (menempel di
+# aplikasi ini seperti sekarang jelas diizinkan).
+# https://mixkit.co/license/#sfxFree
+#
+# Kolom durasi diukur langsung lewat pygame.mixer.Sound(...).get_length(),
+# bukan dari halaman sumber -- jadi dijamin akurat.
+
+gas:
+  - file: racing_moto_speedup_1.mp3
+    title: "Racing motorcycle engine speeding up"
+    duration_s: 9.27
+  - file: racing_moto_speedup_2.mp3
+    title: "Racing motorcycle speeding up"
+    duration_s: 5.62
+  - file: sports_bike_engine.mp3
+    title: "Sports bike engine"
+    duration_s: 14.26
+  - file: motorcycle_engine_working.mp3
+    title: "Motorcycle engine working"
+    duration_s: 2.74
+  - file: fast_car_drive_by.mp3
+    title: "Fast car drive by"
+    duration_s: 3.81
+  - file: motocross_engine.mp3
+    title: "Motocross motorcycle engine"
+    duration_s: 19.88
+
+horn:
+  - file: car_horn.mp3
+    title: "Car horn"
+    duration_s: 0.73
+  - file: small_car_horn.mp3
+    title: "Small car horn"
+    duration_s: 0.60
+  - file: car_double_horn.mp3
+    title: "Car double horn"
+    duration_s: 0.99
+  - file: truck_horn.mp3
+    title: "Truck horn"
+    duration_s: 1.02
+  - file: classic_car_horn.mp3
+    title: "Classic car horn"
+    duration_s: 0.63
+  - file: vintage_bicycle_horn.mp3
+    title: "Vintage bicycle horn"
+    duration_s: 3.00
+  - file: clown_horn_funny.mp3
+    title: "Clown horn (funny)"
+    duration_s: 2.53
+
+arm:
+  - file: car_engine_start.mp3
+    title: "Car engine start"
+    duration_s: 2.61
+  - file: car_ignition.mp3
+    title: "Car ignition"
+    duration_s: 10.53
+  - file: short_car_ignition.mp3
+    title: "Short car ignition"
+    duration_s: 2.48
+  - file: transport_car_start.mp3
+    title: "Transport car start"
+    duration_s: 12.77
+  - file: failed_car_ignition.mp3
+    title: "Failed car ignition (lucu)"
+    duration_s: 2.80

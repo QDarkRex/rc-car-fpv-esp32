@@ -139,6 +139,37 @@ saklar mode.
 
 ---
 
+## Efek suara (SFX)
+
+Ground station memutar suara mesin (mengikuti intensitas pedal gas mentah),
+klakson, dan suara arm — semuanya diputar di laptop/LattePanda, bukan di
+mobil, jadi tidak mempengaruhi perintah yang dikirim ke ESP32.
+
+Ganti pack suara kapan saja saat aplikasi berjalan, tanpa perlu berhenti:
+
+| Tombol | Ganti pack |
+|---|---|
+| `G` / `Shift+G` | gas — berikutnya / sebelumnya |
+| `N` / `Shift+N` | klakson — berikutnya / sebelumnya |
+| `M` / `Shift+M` | arm — berikutnya / sebelumnya |
+
+Pilihan pack terakhir disimpan otomatis ke `config.yaml` (kunci `sfx:`) saat
+aplikasi ditutup, jadi tidak perlu dipilih ulang tiap sesi. Untuk mematikan
+semua suara tanpa menghapus berkasnya, set `sfx.enabled: false` di
+`config.yaml`.
+
+Klakson bisa dipicu dari tombol keyboard `H` (ditahan) atau dari tombol
+fisik di stir. Tombol fisik untuk klakson dikalibrasi lewat `calibrate.py` —
+langkah barunya muncul tepat setelah langkah kalibrasi tombol stop darurat,
+dengan wizard yang sama seperti langkah arm/estop.
+
+Berkas suara berasal dari Mixkit (mixkit.co), lisensi *Mixkit Free
+License* — bebas dipakai personal maupun komersial dan tidak wajib
+atribusi. Lihat `ground/assets/sfx/manifest.yaml` untuk daftar lengkap
+judul dan sumbernya.
+
+---
+
 ## Membuat .exe (LattePanda Windows)
 
 Untuk dipakai di lapangan tanpa perlu menginstal Python di tiap LattePanda:
@@ -221,6 +252,10 @@ Urutan menyalakan penting:
 | `SPASI` | arm / disarm |
 | `E` | stop darurat |
 | `[` `]` | geser trim stir kiri / kanan |
+| `H` (tahan) | klakson |
+| `G` / `Shift+G` | ganti pack suara gas berikutnya / sebelumnya |
+| `N` / `Shift+N` | ganti pack suara klakson berikutnya / sebelumnya |
+| `M` / `Shift+M` | ganti pack suara arm berikutnya / sebelumnya |
 | `F5` | simpan trim ke `config.yaml` |
 | `F11` | layar penuh |
 | `ESC` | keluar |

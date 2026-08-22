@@ -89,6 +89,12 @@ DEFAULT_CONFIG: dict = {
         "strength": 1.0,
     },
     "display": {"width": 960, "height": 720, "vsync": False},
+    "sfx": {
+        "enabled": True,
+        "gas_pack": 0,
+        "horn_pack": 0,
+        "arm_pack": 0,
+    },
 }
 
 
@@ -206,6 +212,82 @@ def save_trim(trim: float, path: Path | None = None) -> Path:
 
     if not written:
         raise ValueError("kunci steering.trim tidak ditemukan di config.yaml")
+
+    shutil.copyfile(path, path.with_suffix(".yaml.bak"))
+    path.write_text("".join(lines), encoding="utf-8")
+    return path
+
+
+def save_sfx_packs(
+    gas_pack: int, horn_pack: int, arm_pack: int, path: Path | None = None
+) -> Path:
+    """Simpan pilihan pack SFX (gas/horn/arm) ke config.yaml.
+
+    Dipanggil HANYA di GroundStation.shutdown() (lihat main.py), bukan tiap
+    kali pengguna mengganti pack dengan tombol G/N/M -- menulis berkas
+    berkali-kali sementara masih mengemudi tidak ada gunanya dan hanya
+    menambah risiko I/O di tengah sesi.
+
+    Dipilih pendekatan line-based yang sama seperti save_trim() di atas,
+    BUKAN yaml.safe_dump ke seluruh berkas, supaya komentar penjelasan yang
+    sudah ada di config.yaml (termasuk blok `sfx:` bawaan yang komentarnya
+    menjelaskan arti tiap pack index) tidak ikut hilang. Kalau blok `sfx:`
+    entah bagaimana tidak ada sama sekali (config.yaml sangat lama, dibuat
+    sebelum fitur SFX ada), blok baru ditambahkan di akhir berkas tanpa
+    komentar -- lebih baik begitu daripada menimpa seluruh berkas.
+    """
+    path = path or CONFIG_PATH
+    if not path.exists():
+        raise FileNotFoundError(f"{path} tidak ditemukan")
+
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    targets = {"gas_pack": gas_pack, "horn_pack": horn_pack, "arm_pack": arm_pack}
+    written = {key: False for key in targets}
+    in_sfx = False
+    sfx_block_found = False
+
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not line[0].isspace():
+            in_sfx = stripped.startswith("sfx:")
+            if in_sfx:
+                sfx_block_found = True
+            continue
+        if not in_sfx:
+            continue
+        key = stripped.split(":")[0].strip()
+        if key not in targets:
+            continue
+
+        indent = line[: len(line) - len(line.lstrip())]
+        replacement = f"{indent}{key}: {targets[key]}"
+        if "#" in line:
+            # Pertahankan komentar dan kolomnya, sama seperti save_trim().
+            column = line.index("#")
+            comment = line[column:].rstrip("\n")
+            padding = max(2, column - len(replacement))
+            replacement += " " * padding + comment
+        lines[index] = replacement + "\n"
+        written[key] = True
+
+    if not sfx_block_found or not all(written.values()):
+        # Blok sfx: tidak ada sama sekali, atau ada tapi salah satu kuncinya
+        # hilang (config.yaml diedit manual) -- tambahkan/ lengkapi di akhir
+        # berkas alih-alih menyerah.
+        if not sfx_block_found:
+            if lines and not lines[-1].endswith("\n"):
+                lines.append("\n")
+            lines.append("sfx:\n")
+            lines.append(f"  enabled: true\n")
+            lines.append(f"  gas_pack: {gas_pack}\n")
+            lines.append(f"  horn_pack: {horn_pack}\n")
+            lines.append(f"  arm_pack: {arm_pack}\n")
+        else:
+            for key in targets:
+                if not written[key]:
+                    lines.append(f"  {key}: {targets[key]}\n")
 
     shutil.copyfile(path, path.with_suffix(".yaml.bak"))
     path.write_text("".join(lines), encoding="utf-8")

@@ -15,6 +15,10 @@ Tombol:
     SPASI   arm / disarm
     E       stop darurat (langsung disarm)
     [ ]     geser trim stir kiri / kanan
+    H       klakson (tahan)
+    G       ganti pack suara gas berikutnya (Shift+G = sebelumnya)
+    N       ganti pack suara klakson berikutnya (Shift+N = sebelumnya)
+    M       ganti pack suara arm berikutnya (Shift+M = sebelumnya)
     F5      simpan trim ke config.yaml
     F11     layar penuh
     ESC     keluar
@@ -35,6 +39,7 @@ import pygame
 from rcground import config as cfg
 from rcground.hud import Hud, HudContext
 from rcground.link import Link
+from rcground.sfx import SfxEngine
 from rcground.video import MjpegStream
 from rcground.wheel import KeyboardWheel, Wheel
 
@@ -80,6 +85,17 @@ class GroundStation:
 
         self.hud = Hud()
         self.link = Link(self.config)
+
+        # SfxEngine menangani sendiri kegagalan audio (headless/tanpa
+        # speaker, manifest hilang, dll) -- lihat rcground/sfx.py. Pack
+        # tersimpan dimuat di sini supaya pilihan pengguna dari sesi
+        # sebelumnya (disimpan lewat cfg.save_sfx_packs di shutdown())
+        # langsung aktif tanpa perlu diganti ulang tiap start.
+        sfx_cfg = self.config.get("sfx", {})
+        self.sfx = SfxEngine(enabled=bool(sfx_cfg.get("enabled", True)))
+        self.sfx.set_pack("gas", int(sfx_cfg.get("gas_pack", 0)))
+        self.sfx.set_pack("horn", int(sfx_cfg.get("horn_pack", 0)))
+        self.sfx.set_pack("arm", int(sfx_cfg.get("arm_pack", 0)))
 
         self.wheel = self._make_wheel(args.keyboard)
 
@@ -149,6 +165,7 @@ class GroundStation:
 
         self.armed = True
         self.estop_latched = False
+        self.sfx.play_arm()
         self._notify("ARMED — mobil siap bergerak")
 
     def _disarm(self, reason: str) -> None:
@@ -208,6 +225,20 @@ class GroundStation:
                     self._save_trim()
                 elif event.key == pygame.K_F11:
                     self._toggle_fullscreen()
+                elif event.key == pygame.K_g:
+                    self._switch_sfx_pack("gas", event.mod & pygame.KMOD_SHIFT)
+                elif event.key == pygame.K_n:
+                    self._switch_sfx_pack("horn", event.mod & pygame.KMOD_SHIFT)
+                elif event.key == pygame.K_m:
+                    self._switch_sfx_pack("arm", event.mod & pygame.KMOD_SHIFT)
+
+    def _switch_sfx_pack(self, category: str, backward) -> None:
+        if backward:
+            self.sfx.prev_pack(category)
+        else:
+            self.sfx.next_pack(category)
+        label = {"gas": "Gas", "horn": "Klakson", "arm": "Arm"}[category]
+        self._notify(f"{label}: {self.sfx.pack_label(category)}")
 
     def _save_trim(self) -> None:
         try:
@@ -258,7 +289,9 @@ class GroundStation:
         self.screen.blit(cached_surface, rect)
         return True
 
-    def _build_context(self, state, throttle_out: float, brake_out: float) -> HudContext:
+    def _build_context(
+        self, state, throttle_out: float, brake_out: float, failsafe: bool
+    ) -> HudContext:
         telemetry = self.link.telemetry
         return HudContext(
             steer=state.steer,
@@ -270,7 +303,7 @@ class GroundStation:
             gear_label=state.gear_label,
             trim=self.wheel.trim,
             armed=self.armed and self.link.connected,
-            failsafe=(telemetry.failsafe if telemetry else False) or not self.link.connected,
+            failsafe=failsafe,
             link_connected=self.link.connected,
             link_locked=self.link.locked,
             wheel_connected=self.wheel.connected,
@@ -292,6 +325,9 @@ class GroundStation:
             video_error=self.video.error if self.video else "video dimatikan",
             max_forward=float(self.config["throttle"].get("max_forward", 0.7)),
             message=self.message if time.monotonic() < self.message_until else "",
+            sfx_gas=self.sfx.pack_label("gas"),
+            sfx_horn=self.sfx.pack_label("horn"),
+            sfx_arm=self.sfx.pack_label("arm"),
         )
 
     # -- loop utama ------------------------------------------------------
@@ -345,8 +381,25 @@ class GroundStation:
 
             self.link.send(state.steer, throttle_out, self.armed, brake_out)
 
+            # Dihitung sekali di sini dan dipakai baik untuk HUD (banner
+            # FAILSAFE) maupun untuk menentukan apakah suara gas boleh
+            # berbunyi -- dua tempat itu dulu menghitungnya secara terpisah
+            # di _build_context, yang gampang berbeda kalau salah satu diubah
+            # tanpa mengubah yang lain.
+            telemetry = self.link.telemetry
+            failsafe = (
+                telemetry.failsafe if telemetry else False
+            ) or not self.link.connected
+
+            # Klakson: tombol pada stir ATAU tombol H keyboard, mana pun yang
+            # ditahan. get_pressed() dipoll tiap frame (bukan event KEYDOWN)
+            # supaya perilaku "ditahan" konsisten dengan tombol fisik di stir.
+            keyboard_horn = pygame.key.get_pressed()[pygame.K_h]
+            self.sfx.trigger_horn(bool(state.horn_held) or keyboard_horn)
+            self.sfx.update_gas(state.gas, active=self.armed and not failsafe)
+
             self._decode_latest_frame()
-            context = self._build_context(state, throttle_out, brake_out)
+            context = self._build_context(state, throttle_out, brake_out, failsafe)
             if not self._blit_video():
                 self.hud.draw_no_video(self.screen, context)
             self.hud.draw(self.screen, context, dt)
@@ -365,6 +418,20 @@ class GroundStation:
         return 0
 
     def shutdown(self) -> None:
+        # Disimpan HANYA di sini (bukan tiap kali pack diganti dengan G/N/M)
+        # -- lihat catatan panjang di cfg.save_sfx_packs soal kenapa. Dibungkus
+        # try/except karena config.yaml mungkin sudah dihapus/dipindah orang
+        # selagi aplikasi berjalan; gagal menyimpan pilihan pack bukan alasan
+        # untuk gagal mengirim perintah netral penutup di bawah ini.
+        try:
+            cfg.save_sfx_packs(
+                self.sfx.pack_index("gas"),
+                self.sfx.pack_index("horn"),
+                self.sfx.pack_index("arm"),
+            )
+        except (OSError, ValueError) as exc:
+            print(f"Gagal menyimpan pilihan pack SFX: {exc}")
+
         print("\nMenutup - mengirim perintah netral...")
         # Beberapa paket disarm berturut-turut supaya mobil pasti berhenti
         # meskipun sebagian paket hilang.

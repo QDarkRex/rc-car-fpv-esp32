@@ -56,6 +56,9 @@ class HudContext:
     video_error: str | None = None
     max_forward: float = 0.0
     message: str = ""
+    sfx_gas: str = ""
+    sfx_horn: str = ""
+    sfx_arm: str = ""
 
 
 class Hud:
@@ -211,7 +214,9 @@ class Hud:
         if width < 300:
             return
 
-        rect = pygame.Rect(width - 172, 56, 160, 132)
+        # Tinggi panel diperbesar dari 132 supaya muat 3 baris tambahan info
+        # pack SFX aktif (gas/klakson/arm) di bawah baris telemetri lama.
+        rect = pygame.Rect(width - 172, 56, 160, 204)
         self._panel(surface, rect)
 
         x_label = rect.left + 10
@@ -255,6 +260,24 @@ class Hud:
 
         row("AKTIF", f"{ctx.uptime_ms // 1000:d} s", DIM)
 
+        # Info pack SFX aktif -- baris lebih pendek daripada row() biasa
+        # (label+nilai sejajar kolom) karena judul pack bisa panjang dan
+        # perlu ruang penuh selebar panel, bukan cuma separuh kanan seperti
+        # nilai telemetri di atas. _pick_fitting menyingkat ke varian yang
+        # lebih pendek kalau judul aslinya tidak muat di lebar panel.
+        y += 6
+        avail = rect.width - 20
+        for label, value, color in (
+            ("GAS", ctx.sfx_gas, GREEN),
+            ("KLAKSON", ctx.sfx_horn, BLUE),
+            ("ARM", ctx.sfx_arm, AMBER),
+        ):
+            full = f"{label} {value}"
+            short = f"{label} {value[:18]}" if len(value) > 18 else full
+            text = self._pick_fitting([full, short, label], self.font_small, avail) or label
+            self._text(surface, text, (x_label, y), self.font_small, color)
+            y += 18
+
         if ctx.vbat is not None and ctx.vbat < BATT_CRIT_V:
             warn = pygame.Rect(rect.left, rect.bottom + 6, rect.width, 24)
             self._panel(surface, warn, alpha=200)
@@ -288,9 +311,11 @@ class Hud:
         else:
             left = self._pick_fitting(
                 [
-                    "SPASI arm/disarm  |  E stop darurat  |  [ ] trim  "
+                    "SPASI arm/disarm  |  E stop darurat  |  [ ] trim  |  H klakson  "
+                    "|  G/N/M pack suara  |  F5 simpan  |  ESC keluar",
+                    "SPASI arm  |  E stop  |  [ ] trim  |  H klakson  |  G/N/M pack  "
                     "|  F5 simpan  |  ESC keluar",
-                    "SPASI arm  |  E stop  |  [ ] trim  |  F5 simpan  |  ESC keluar",
+                    "SPASI arm  |  E stop  |  [ ] trim  |  H klakson  |  ESC keluar",
                     "SPASI arm  |  E stop  |  [ ] trim  |  ESC keluar",
                     "SPASI arm  |  E stop  |  ESC keluar",
                     "SPASI arm  |  E stop",

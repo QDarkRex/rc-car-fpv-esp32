@@ -80,6 +80,10 @@ TOMBOL
   SPASI   arm / disarm
   E       stop darurat
   [ ]     geser trim stir
+  H       klakson (tahan)
+  G / Shift+G   ganti pack suara gas
+  N / Shift+N   ganti pack suara klakson
+  M / Shift+M   ganti pack suara arm
   F5      simpan trim ke config.yaml
   F11     layar penuh
   ESC     keluar
@@ -102,7 +106,7 @@ def _clean(path: Path) -> None:
         shutil.rmtree(path)
 
 
-def build_one(script: str, name: str) -> None:
+def build_one(script: str, name: str, extra_args: list[str] | None = None) -> None:
     print(f"\n=== membangun {name}.exe dari {script} ===")
     PyInstaller.__main__.run(
         [
@@ -123,6 +127,7 @@ def build_one(script: str, name: str) -> None:
             str(SPEC_DIR),
             "--noconfirm",
             "--clean",
+            *(extra_args or []),
         ]
     )
 
@@ -132,7 +137,19 @@ def main() -> int:
     _clean(BUILD_DIR)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    build_one("main.py", "RCCar")
+    # --add-data membundel assets/sfx/ (manifest.yaml + mp3) DI DALAM
+    # RCCar.exe, berbeda dari config.yaml/calibration.yaml yang disalin ke
+    # SEBELAH exe di bawah -- lihat catatan panjang di rcground/sfx.py
+    # (_sfx_root) soal kenapa assets/sfx tidak perlu bisa diedit pengguna
+    # sehingga aman dibundel ke dalam, dan soal sys._MEIPASS sebagai lokasi
+    # ekstraksinya saat exe --onefile berjalan. PENTING: pemisah sumber;tujuan
+    # pada --add-data PyInstaller di Windows memakai TITIK KOMA (;), bukan
+    # titik dua (:) seperti di Linux/Mac -- kalau build ini pernah dipindah
+    # ke CI Linux/Mac, baris ini harus disesuaikan (os.pathsep).
+    sfx_add_data = f"{GROUND_DIR / 'assets' / 'sfx'};assets/sfx"
+    build_one("main.py", "RCCar", extra_args=["--add-data", sfx_add_data])
+    # Kalibrasi.exe tidak memutar suara apa pun, jadi tidak perlu membundel
+    # assets/sfx -- menghematnya membuat exe ini tetap kecil.
     build_one("calibrate.py", "Kalibrasi")
 
     # config.yaml dan calibration.yaml DI LUAR exe, di sebelahnya, supaya

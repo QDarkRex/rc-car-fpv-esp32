@@ -59,6 +59,8 @@ STEPS = [
          "Tombol ini yang akan menghidupkan/mematikan motor."),
     Step("estop", "Tekan tombol yang ingin dipakai untuk STOP DARURAT",
          "Pilih tombol yang mudah diraih tanpa melihat."),
+    Step("horn", "Tekan tombol yang ingin dipakai untuk KLAKSON",
+         "Tombol ini akan membunyikan klakson selama ditahan."),
 ]
 
 
@@ -74,6 +76,7 @@ class Result:
     brake_pressed: float = 1.0
     arm_button: int | None = None
     estop_button: int | None = None
+    horn_button: int | None = None
 
 
 @dataclass
@@ -221,9 +224,12 @@ def draw_buttons(screen, font_small, stick, result, y0: int) -> None:
             color = BLUE
         elif i == result.estop_button:
             color = RED
+        elif i == result.horn_button:
+            color = AMBER
         rect = pygame.Rect(x, y, 26, 18)
         pygame.draw.rect(screen, color, rect, border_radius=3)
-        text_color = BG if (pressed or i in (result.arm_button, result.estop_button)) else DIM
+        highlighted = (result.arm_button, result.estop_button, result.horn_button)
+        text_color = BG if (pressed or i in highlighted) else DIM
         label = font_small.render(str(i), True, text_color)
         screen.blit(label, label.get_rect(center=rect.center))
         x += 30
@@ -455,14 +461,22 @@ def main() -> int:
                 return 1
 
             # Langkah tombol ditangkap dari event tekan tombol joystick.
-            if step.key in ("arm", "estop") and event.type == pygame.JOYBUTTONDOWN:
+            if step.key in ("arm", "estop", "horn") and event.type == pygame.JOYBUTTONDOWN:
                 if step.key == "arm":
                     result.arm_button = event.button
-                else:
+                elif step.key == "estop":
                     if event.button == result.arm_button:
                         error = "Tombol itu sudah dipakai untuk ARM. Pilih tombol lain."
                         continue
                     result.estop_button = event.button
+                else:  # horn
+                    if event.button == result.arm_button:
+                        error = "Tombol itu sudah dipakai untuk ARM. Pilih tombol lain."
+                        continue
+                    if event.button == result.estop_button:
+                        error = "Tombol itu sudah dipakai untuk STOP DARURAT. Pilih tombol lain."
+                        continue
+                    result.horn_button = event.button
                 error = ""
                 step_index += 1
                 continue
@@ -522,7 +536,11 @@ def main() -> int:
                 "pressed": round(result.brake_pressed, 4),
             },
         },
-        "buttons": {"arm": result.arm_button, "estop": result.estop_button},
+        "buttons": {
+            "arm": result.arm_button,
+            "estop": result.estop_button,
+            "horn": result.horn_button,
+        },
     }
 
     if shifter.kind == "h_pattern":
@@ -557,6 +575,7 @@ def main() -> int:
           f"(lepas {result.rest[result.brake_axis]:+.2f} -> injak {result.brake_pressed:+.2f})")
     print(f"  arm   : tombol {result.arm_button}")
     print(f"  stop  : tombol {result.estop_button}")
+    print(f"  klakson: tombol {result.horn_button}")
     if shifter.kind == "h_pattern":
         gears = "  ".join(
             f"gigi {g}=tombol {b}" for g, b in sorted(shifter.gear_buttons.items())

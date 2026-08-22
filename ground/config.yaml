@@ -104,3 +104,9 @@ display:
   width: 960
   height: 720
   vsync: false
+
+sfx:
+  enabled: true            # matikan semua suara tanpa uninstall/hapus file
+  gas_pack: 0               # indeks pack gas aktif, 0 = "Racing motorcycle engine speeding up"
+  horn_pack: 0              # 0 = "Car horn"
+  arm_pack: 0               # 0 = "Car engine start"

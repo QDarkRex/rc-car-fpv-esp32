@@ -81,6 +81,7 @@ class WheelState:
     gear_label: str = "N"        # "R", "N", "1".."6"
     arm_edge: bool = False      # True hanya pada frame tombol arm ditekan
     estop_held: bool = False
+    horn_held: bool = False     # True selama tombol klakson pada stir ditahan
     connected: bool = False
     source: str = "none"
     buttons: dict = field(default_factory=dict)
@@ -266,6 +267,10 @@ class Wheel:
         state.arm_edge = arm_now and not self._prev_arm
         self._prev_arm = arm_now
         state.estop_held = button(buttons_cfg.get("estop"))
+        # .get("horn") aman kembalikan None kalau calibration.yaml lama belum
+        # punya kunci ini (pengguna belum kalibrasi ulang lewat calibrate.py)
+        # -- dan button(None) di atas sudah menangani None -> False.
+        state.horn_held = button(buttons_cfg.get("horn"))
         state.buttons = {i: js.get_button(i) for i in range(js.get_numbuttons())}
 
         gear = self._read_gear(js) if self.shifter_enabled else 0
