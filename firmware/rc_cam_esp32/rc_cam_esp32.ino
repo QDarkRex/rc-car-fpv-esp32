@@ -140,9 +140,17 @@
 
 static const char* STREAM_CONTENT_TYPE =
     "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
-static const char* STREAM_BOUNDARY = "\r\n--" PART_BOUNDARY "\r\n";
-static const char* STREAM_PART_HEADER =
-    "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
+
+// Boundary + header multipart digabung jadi SATU format string (bisa karena
+// PART_BOUNDARY adalah literal, disambung compiler saat kompilasi -- beda
+// dengan STREAM_BOUNDARY/STREAM_PART_HEADER versi lama yang variabel
+// terpisah). Tujuannya supaya keduanya bisa dikirim lewat SATU panggilan
+// httpd_resp_send_chunk, bukan dua: dengan TCP_NODELAY aktif tiap panggilan
+// cenderung jadi segmen TCP sendiri, jadi menggabungkan boundary (~24 byte)
+// dan header (~50 byte) memangkas jumlah paket kecil per frame dari 3 jadi 2
+// -- lumayan saat 2-3 kamera streaming bersamaan di 2,4 GHz yang sama.
+static const char* STREAM_PART_FORMAT =
+    "\r\n--" PART_BOUNDARY "\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
 
 static httpd_handle_t server = NULL;
 static uint32_t frameCounter = 0;
@@ -183,7 +191,9 @@ static esp_err_t streamHandler(httpd_req_t* req) {
 
   Serial.println("[CAM] klien stream tersambung");
 
-  char partHeader[64];
+  // 128, bukan 64: sekarang menampung boundary + header sekaligus (lihat
+  // STREAM_PART_FORMAT di atas), jadi harus lebih longgar dari sebelumnya.
+  char partHeader[128];
   while (true) {
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb) {
@@ -201,13 +211,20 @@ static esp_err_t streamHandler(httpd_req_t* req) {
       break;
     }
 
-    const size_t headerLength =
-        snprintf(partHeader, sizeof(partHeader), STREAM_PART_HEADER, fb->len);
+    const int headerLength =
+        snprintf(partHeader, sizeof(partHeader), STREAM_PART_FORMAT, fb->len);
 
-    result = httpd_resp_send_chunk(req, STREAM_BOUNDARY, strlen(STREAM_BOUNDARY));
-    if (result == ESP_OK) {
-      result = httpd_resp_send_chunk(req, partHeader, headerLength);
+    if (headerLength < 0 || (size_t)headerLength >= sizeof(partHeader)) {
+      // Tidak seharusnya terjadi (header jauh di bawah 128 byte), tapi kalau
+      // Content-Length suatu saat membengkak, lebih baik putus koneksi
+      // daripada mengirim header multipart yang terpotong.
+      esp_camera_fb_return(fb);
+      Serial.println("[CAM] header multipart melebihi buffer");
+      result = ESP_FAIL;
+      break;
     }
+
+    result = httpd_resp_send_chunk(req, partHeader, headerLength);
     if (result == ESP_OK) {
       result = httpd_resp_send_chunk(req, (const char*)fb->buf, fb->len);
     }
