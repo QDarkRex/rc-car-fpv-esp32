@@ -124,10 +124,12 @@ void Console::printStatus() const {
   }
   Serial.println();
 
-  Serial.printf("  paket masuk   : rx %lu  rusak %lu  basi %lu\n",
+  Serial.printf("  paket masuk   : rx %lu  rusak %lu  basi %lu  bukan-untuk-unit-ini %lu\n",
                 (unsigned long)_link->rxCount(),
                 (unsigned long)_link->badCount(),
-                (unsigned long)_link->staleCount());
+                (unsigned long)_link->staleCount(),
+                (unsigned long)_link->foreignCount());
+  Serial.printf("  unit ID mobil : %d\n", UNIT_ID);
 
   Serial.println("  -- perintah dari ground station --");
   Serial.printf("    steer %+5d | throttle %+5d | brake %3u\n",

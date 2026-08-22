@@ -1,13 +1,16 @@
-// protocol.h — struktur paket UDP RC Car v2
+// protocol.h — struktur paket UDP RC Car v3
 //
 // KEMBAR dengan: ground/rcground/protocol.py  dan  docs/protocol.md
 // Kalau salah satu diubah, ubah ketiganya.
+//
+// v3 menambah field unit_id ke kedua paket, supaya 3 mobil bisa berbagi satu
+// jaringan tanpa saling mengunci silang. Lihat docs/protocol.md bagian 7.
 
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
 
-#define RC_PROTOCOL_VERSION 2
+#define RC_PROTOCOL_VERSION 3
 #define RC_CONTROL_PORT     4210
 
 // Magic
@@ -38,6 +41,7 @@ struct ControlPacket {
   uint8_t  magic0;
   uint8_t  magic1;
   uint8_t  version;
+  uint8_t  unit_id;    // 1..3, mobil mana yang dituju -- lihat docs/protocol.md bagian 7
   uint16_t seq;
   uint8_t  flags;
   int16_t  steer;      // -1000..1000, negatif = kiri
@@ -50,6 +54,7 @@ struct TelemetryPacket {
   uint8_t  magic0;
   uint8_t  magic1;
   uint8_t  version;
+  uint8_t  unit_id;    // mobil mana yang mengirim -- harus sama dengan ControlPacket
   uint16_t seq_echo;
   uint16_t vbat_mv;
   int8_t   rssi;
@@ -60,8 +65,8 @@ struct TelemetryPacket {
 
 #pragma pack(pop)
 
-static_assert(sizeof(ControlPacket) == 12, "ControlPacket harus 12 byte");
-static_assert(sizeof(TelemetryPacket) == 14, "TelemetryPacket harus 14 byte");
+static_assert(sizeof(ControlPacket) == 13, "ControlPacket harus 13 byte");
+static_assert(sizeof(TelemetryPacket) == 15, "TelemetryPacket harus 15 byte");
 
 // CRC-8/ATM: poly 0x07, init 0x00, tanpa refleksi, tanpa xorout.
 inline uint8_t rc_crc8(const uint8_t *data, size_t len) {

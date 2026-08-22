@@ -60,23 +60,49 @@
 
 // ----------------------------------------------------------------- setelan
 
+// =================================================================
+// UNIT_ID -- SATU-SATUNYA BARIS YANG PERLU DIUBAH SAAT FLASH KAMERA
+// KE-2 DAN KE-3. Isi 1, 2, atau 3, HARUS SAMA dengan UNIT_ID di
+// firmware/rc_car_esp32/config.h milik mobil yang sama. IP kamera
+// diturunkan otomatis dari angka ini -- lihat CAM_IP_4 di bawah.
+// =================================================================
+#define UNIT_ID 1
+
 #define WIFI_SSID "RCCar"
 #define WIFI_PASS "admin.admin"
 
+// IP statis, DITURUNKAN dari UNIT_ID: unit 1 = .60, unit 2 = .61, unit 3 = .62.
 // Router GL.iNet memakai subnet 192.168.8.x dengan gateway .1 dan DHCP
-// otomatis di rentang .100-.249 -- .60 dipilih supaya tidak bentrok.
-// Harus sama dengan camera.stream_url di ground/config.yaml
+// otomatis di rentang .100-.249 -- rentang .60-.62 dipilih supaya tidak
+// pernah bentrok dengan DHCP maupun dengan mobil (.50-.52, lihat
+// firmware/rc_car_esp32/config.h).
+// Harus sama dengan camera.stream_url di ground/config.yaml (atau biarkan
+// ground/config.yaml menurunkannya sendiri lewat kunci `unit:`).
 #define CAM_IP_1 192
 #define CAM_IP_2 168
 #define CAM_IP_3 8
-#define CAM_IP_4 60
+#define CAM_IP_4 (59 + UNIT_ID)
 #define GATEWAY_IP_4 1
 #define USE_DHCP 0
 
-// FRAMESIZE_VGA (640x480) adalah titik seimbang yang baik untuk mengemudi.
-// Naik ke SVGA/XGA menambah detail tapi juga menambah latensi dan membuat
-// stream lebih rapuh saat sinyal melemah. Turun ke QVGA kalau jangkauan
-// lebih penting daripada ketajaman.
+// =================================================================
+// RESOLUSI KAMERA -- ganti SATU baris ini kalau 3 stream bersamaan
+// membuat jaringan tersendat, lalu flash ulang KETIGA kamera.
+//
+//   FRAMESIZE_VGA  (640x480, dipakai sekarang)
+//     ~3,5-5 Mbps per kamera. Dengan 3 mobil balapan bersamaan itu
+//     berarti total ~10-15 Mbps hanya untuk video, berebut dengan paket
+//     kendali 50 Hz di jaringan 2,4 GHz yang sama -- BERISIKO membuat
+//     video atau kendali tersendat kalau ketiganya aktif sekaligus.
+//
+//   FRAMESIZE_QVGA (320x240)
+//     ~1,5 Mbps per kamera. Tiga kamera bersamaan total ~4,5 Mbps --
+//     AMAN, menyisakan banyak ruang untuk paket kendali. Gambar lebih
+//     kecil tapi masih cukup untuk mengemudi FPV.
+//
+// Cara ganti: ubah baris CAM_FRAMESIZE di bawah, lalu flash ulang ketiga
+// modul kamera (semuanya, supaya bandwidth turun serentak -- kalau cuma
+// sebagian yang diturunkan, sisanya tetap membebani jaringan yang sama).
 #define CAM_FRAMESIZE FRAMESIZE_VGA
 
 // 10 = kualitas terbaik, 63 = terburuk. Angka lebih besar = frame lebih kecil

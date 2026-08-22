@@ -9,20 +9,54 @@ Ada dua berkas, sengaja dipisah:
 
   calibration.yaml  -- hasil calibrate.py: indeks axis dan nilai ujung stir.
                        Berkas mesin, aman ditulis ulang kapan pun.
+
+Soal `unit:` dan alamat jaringan (3 mobil, 3 LattePanda) -- lihat
+docs/balapan-3-unit.md untuk gambaran lengkap. Ringkasnya, urutan prioritas
+sumber alamat mobil/kamera adalah:
+
+  1. Argumen CLI --car / --cam (diterapkan main.py SETELAH load_config())
+  2. network.car_ip / camera.stream_url ditulis EKSPLISIT di config.yaml
+  3. Diturunkan otomatis dari unit: di config.yaml
+
+load_config() di bawah ini menangani prioritas 2 vs 3: ia membaca berkas
+MENTAH dulu (sebelum digabung dengan DEFAULT_CONFIG) untuk tahu apakah
+pengguna benar-benar menulis car_ip/stream_url sendiri, atau apakah nilai itu
+hanya ada karena ikut DEFAULT_CONFIG.
 """
 
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
 
 import yaml
 
-GROUND_DIR = Path(__file__).resolve().parent.parent
+# JEBAKAN PyInstaller: Path(__file__) di dalam exe yang dibundel TIDAK
+# menunjuk ke folder tempat RCCar.exe berada. Ia menunjuk ke folder
+# ekstraksi sementara PyInstaller (_MEIPASS pada mode --onefile, atau folder
+# instalasi read-only pada mode --onedir) -- folder yang isinya salinan kode
+# Python yang di-freeze, bukan folder kerja pengguna. Kalau GROUND_DIR
+# dibiarkan memakai __file__ apa adanya, config.yaml yang diedit pengguna di
+# sebelah RCCar.exe TIDAK PERNAH terbaca; aplikasi akan diam-diam memakai
+# nilai default atau (lebih buruk) salinan config.yaml lama yang ikut
+# ter-bundle saat build.
+#
+# sys.executable, sebaliknya, SELALU menunjuk ke exe yang benar-benar
+# dijalankan pengguna -- itulah lokasi yang benar untuk config.yaml dan
+# calibration.yaml saat frozen. Saat dijalankan sebagai skrip .py biasa
+# (bukan exe), sys.frozen tidak ada sama sekali, jadi perilaku lama
+# (relatif terhadap lokasi paket rcground/) dipertahankan apa adanya.
+if getattr(sys, "frozen", False):
+    GROUND_DIR = Path(sys.executable).resolve().parent
+else:
+    GROUND_DIR = Path(__file__).resolve().parent.parent
 CONFIG_PATH = GROUND_DIR / "config.yaml"
 CALIBRATION_PATH = GROUND_DIR / "calibration.yaml"
 
 DEFAULT_CONFIG: dict = {
+    # Nomor unit mobil (1, 2, atau 3). Lihat docs/balapan-3-unit.md.
+    "unit": 1,
     "network": {
         "car_ip": "192.168.137.50",
         "car_port": 4210,
@@ -74,13 +108,44 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+def unit_car_ip(unit: int) -> str:
+    # Harus sama dengan CAR_IP_4 = (49 + UNIT_ID) di firmware/rc_car_esp32/config.h
+    return f"192.168.8.{49 + unit}"
+
+
+def unit_stream_url(unit: int) -> str:
+    # Harus sama dengan CAM_IP_4 = (59 + UNIT_ID) di firmware/rc_cam_esp32/rc_cam_esp32.ino
+    return f"http://192.168.8.{59 + unit}/stream"
+
+
 def load_config(path: Path | None = None) -> dict:
     path = path or CONFIG_PATH
     if not path.exists():
-        return dict(DEFAULT_CONFIG)
-    with path.open("r", encoding="utf-8") as handle:
-        loaded = yaml.safe_load(handle) or {}
-    return _deep_merge(DEFAULT_CONFIG, loaded)
+        raw: dict = {}
+    else:
+        with path.open("r", encoding="utf-8") as handle:
+            raw = yaml.safe_load(handle) or {}
+
+    merged = _deep_merge(DEFAULT_CONFIG, raw)
+
+    unit = int(merged.get("unit", 1))
+    if unit not in (1, 2, 3):
+        raise ValueError(f"config.yaml: unit harus 1, 2, atau 3 (dapat {unit!r})")
+    merged["unit"] = unit
+
+    # Derivasi dari unit: HANYA kalau pengguna tidak menulis car_ip/stream_url
+    # sendiri di config.yaml. `raw` (bukan `merged`) dipakai untuk mengecek
+    # ini karena merged sudah tercampur dengan DEFAULT_CONFIG dan tidak bisa
+    # lagi membedakan "pengguna menulis ini" dari "ini cuma nilai default".
+    raw_network = raw.get("network") if isinstance(raw.get("network"), dict) else {}
+    raw_camera = raw.get("camera") if isinstance(raw.get("camera"), dict) else {}
+
+    if "car_ip" not in raw_network:
+        merged["network"]["car_ip"] = unit_car_ip(unit)
+    if "stream_url" not in raw_camera:
+        merged["camera"]["stream_url"] = unit_stream_url(unit)
+
+    return merged
 
 
 def load_calibration(path: Path | None = None) -> dict:

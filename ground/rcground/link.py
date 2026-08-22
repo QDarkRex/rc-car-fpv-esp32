@@ -5,6 +5,14 @@ Selama telemetri belum pernah diterima, paket juga dikirim ke alamat broadcast
 sebagai cadangan bila subnet ternyata berbeda. Selama fase itu tautan dianggap
 BELUM terkunci dan arming tidak diizinkan -- lihat docs/protocol.md bagian 6.
 
+Dengan 3 mobil di satu jaringan, broadcast discovery TETAP aman berkat
+unit_id di protokol v3: setiap paket kontrol membawa unit_id pengirim,
+mobil membuang paket yang bukan untuknya, dan sebaliknya ground station ini
+membuang telemetri dari unit_id lain SEBELUM locked_addr sempat terkunci ke
+alamat itu. Tanpa penyaringan ini, ground station unit 1 bisa mengunci ke
+mobil unit 2 kalau mobil unit 2 kebetulan membalas lebih dulu -- berbahaya
+saat balapan. Lihat docs/protocol.md bagian 7.
+
 Penerimaan berjalan di thread sendiri. Ini bukan sekadar rapi: kalau telemetri
 baru dibaca saat loop render kebetulan sempat, waktu tibanya ikut terkena
 jadwal render dan angka RTT di HUD menjadi salah -- terbaca puluhan milidetik
@@ -26,6 +34,11 @@ RECV_TIMEOUT = 0.2
 class Link:
     def __init__(self, config: dict) -> None:
         net = config.get("network", {})
+        # unit_id milik ground station INI -- setiap paket kontrol yang
+        # dikirim membawa nomor ini, dan setiap telemetri yang unit_id-nya
+        # berbeda dibuang. Lihat docs/protocol.md bagian 7 dan TUGAS 3 di
+        # config.yaml untuk cara menurunkannya dari kunci `unit:`.
+        self.unit_id = int(config.get("unit", 1))
         self.car_addr = (
             str(net.get("car_ip", "192.168.137.50")),
             int(net.get("car_port", proto.CONTROL_PORT)),
@@ -56,6 +69,12 @@ class Link:
         self.tx_count = 0
         self.rx_count = 0
         self.bad_count = 0
+        # Telemetri sehat (magic/versi/CRC benar) tapi dari unit_id lain --
+        # mis. mobil unit 2 yang kebetulan terdengar oleh ground station
+        # unit 1. Dihitung terpisah dari bad_count karena ini bukan
+        # kerusakan paket, murni bukan untuk kita. Lihat docs/protocol.md
+        # bagian 7.
+        self.foreign_count = 0
 
         self._stop = threading.Event()
         self._rx_thread = threading.Thread(
@@ -118,6 +137,7 @@ class Link:
                 self._send_times.pop(self._send_order.popleft(), None)
 
         packet = proto.pack_control(
+            unit_id=self.unit_id,
             seq=seq,
             flags=flags,
             steer=int(round(steer * proto.AXIS_MAX)),
@@ -152,6 +172,18 @@ class Link:
             if telemetry is None:
                 with self._lock:
                     self.bad_count += 1
+                continue
+
+            if telemetry.unit_id != self.unit_id:
+                # Mobil lain menjawab -- BUKAN dianggap rusak, dan yang
+                # penting TIDAK mengunci locked_addr ke alamat itu. Inilah
+                # yang membuat discovery broadcast aman dipertahankan dengan
+                # 3 mobil di satu jaringan: broadcast boleh terdengar oleh
+                # semua mobil, tapi hanya balasan dari unit kita sendiri yang
+                # pernah dianggap sebagai "mobil ditemukan". Lihat
+                # docs/protocol.md bagian 7.
+                with self._lock:
+                    self.foreign_count += 1
                 continue
 
             with self._lock:

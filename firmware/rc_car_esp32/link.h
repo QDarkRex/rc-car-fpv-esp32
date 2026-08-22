@@ -35,6 +35,12 @@ class CarLink {
   uint32_t rxCount() const { return _rxCount; }
   uint32_t badCount() const { return _badCount; }
   uint32_t staleCount() const { return _staleCount; }
+  // Paket kontrol valid (magic/versi/CRC benar) tapi unit_id-nya bukan
+  // milik mobil ini -- lihat docs/protocol.md bagian 7. Dipisah dari
+  // badCount supaya "status" di konsol bisa membedakan paket rusak dari
+  // paket sehat yang memang bukan untuk mobil ini (mis. ground station
+  // unit lain yang salah kunci).
+  uint32_t foreignCount() const { return _foreignCount; }
 
  private:
   void connectWifi();
@@ -71,6 +77,7 @@ class CarLink {
   uint32_t _rxCount = 0;
   uint32_t _badCount = 0;
   uint32_t _staleCount = 0;
+  uint32_t _foreignCount = 0;
 
   uint8_t _buffer[64];
 };

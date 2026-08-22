@@ -5,6 +5,7 @@ per detik, dan menggambar video FPV beserta HUD.
 
 Jalankan:
     python main.py                     # normal
+    python main.py --unit 2            # kendalikan mobil unit 2 (lihat docs/balapan-3-unit.md)
     python main.py --car 127.0.0.1     # uji dengan fake_car.py di mesin ini
     python main.py --cam http://127.0.0.1:8080/stream   # uji dgn fake_cam.py
     python main.py --no-video          # tanpa kamera
@@ -47,12 +48,22 @@ class GroundStation:
         self.config = cfg.load_config()
         self.calibration = cfg.load_calibration()
 
+        # Prioritas alamat, dari yang paling menang: --car/--cam (paling
+        # bawah blok ini) > --unit > apa pun yang sudah diturunkan
+        # load_config() dari unit: / car_ip / stream_url di config.yaml.
+        # Lihat docs/balapan-3-unit.md.
+        if args.unit:
+            self.config["unit"] = args.unit
+            self.config["network"]["car_ip"] = cfg.unit_car_ip(args.unit)
+            self.config["camera"]["stream_url"] = cfg.unit_stream_url(args.unit)
         if args.car:
             self.config["network"]["car_ip"] = args.car
             # Saat menguji ke alamat spesifik, broadcast hanya menambah bising.
             self.config["network"]["broadcast"] = args.car
         if args.cam:
             self.config["camera"]["stream_url"] = args.cam
+
+        self.unit = int(self.config.get("unit", 1))
 
         self.disarm_on_link_loss = bool(
             self.config["network"].get("disarm_on_link_loss", True)
@@ -272,7 +283,11 @@ class GroundStation:
             vbat=telemetry.vbat if telemetry else None,
             low_batt=telemetry.low_batt if telemetry else False,
             uptime_ms=telemetry.uptime_ms if telemetry else 0,
-            target=self.link.target_description,
+            # Nomor unit ditempel di depan target supaya pembalap tidak
+            # tertukar mesin -- lihat catatan _pick_fitting di hud.py,
+            # yang sudah sadar-lebar dan otomatis menyingkat teks ini kalau
+            # jendela sempit.
+            target=f"UNIT {self.unit} · {self.link.target_description}",
             video_ok=bool(self.video and self.video.connected),
             video_error=self.video.error if self.video else "video dimatikan",
             max_forward=float(self.config["throttle"].get("max_forward", 0.7)),
@@ -364,6 +379,14 @@ class GroundStation:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Ground station RC Car")
+    parser.add_argument(
+        "--unit",
+        type=int,
+        choices=(1, 2, 3),
+        metavar="N",
+        help="timpa unit dari config.yaml (1/2/3) -- menurunkan ulang car_ip "
+        "dan stream_url; --car/--cam tetap menang kalau keduanya dipakai",
+    )
     parser.add_argument("--car", metavar="IP", help="timpa IP mobil dari config.yaml")
     parser.add_argument("--cam", metavar="URL", help="timpa URL stream dari config.yaml")
     parser.add_argument("--no-video", action="store_true", help="jalan tanpa kamera")

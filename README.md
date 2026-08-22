@@ -30,6 +30,19 @@ semuanya bisa diubah tanpa flash ulang ESP32.
 
 ---
 
+## Balapan dengan 3 mobil
+
+Kalau Anda menyiapkan lebih dari satu mobil (3 mobil, 3 LattePanda, 1
+router GL.iNet), baca [docs/balapan-3-unit.md](docs/balapan-3-unit.md) —
+tabel alamat lengkap, langkah setup per unit, checklist hari balapan, dan
+cara memastikan tidak ada cross-control antar mobil.
+
+Ringkasnya: setiap mobil punya `UNIT_ID` (1/2/3) yang diset sekali di
+firmware, dan setiap LattePanda punya `unit:` yang sama di
+`ground/config.yaml`. Semua alamat IP diturunkan otomatis dari angka itu.
+
+---
+
 ## Status pengujian terakhir
 
 Checkpoint terbaru proyek, hasil kalibrasi PXN, perbaikan yang sudah masuk,
@@ -43,8 +56,9 @@ dan pekerjaan hardware yang belum dilakukan dicatat di
 ```
 RC Car/
 ├── docs/
-│   ├── wiring.md      Perakitan, skema daya, pinout, checklist
-│   └── protocol.md    Spesifikasi paket UDP (kontrak antar sisi)
+│   ├── wiring.md            Perakitan, skema daya, pinout, checklist
+│   ├── protocol.md          Spesifikasi paket UDP (kontrak antar sisi)
+│   └── balapan-3-unit.md    Setup 3 mobil/3 LattePanda, alamat, checklist
 ├── firmware/
 │   ├── rc_car_esp32/  Otak mobil (ESP32 Dev Module)
 │   └── rc_cam_esp32/  Kamera FPV (XIAO ESP32S3 Sense, AI-Thinker ESP32-CAM
@@ -52,9 +66,10 @@ RC Car/
 └── ground/
     ├── main.py        Aplikasi ground station
     ├── calibrate.py   Wizard kalibrasi stir
+    ├── build_exe.py   Build RCCar.exe + Kalibrasi.exe (PyInstaller)
     ├── fake_car.py    Simulator mobil
     ├── fake_cam.py    Simulator kamera
-    └── config.yaml    Semua tuning
+    └── config.yaml    Semua tuning (termasuk `unit:` mobil mana yang dikendalikan)
 ```
 
 ---
@@ -124,6 +139,22 @@ saklar mode.
 
 ---
 
+## Membuat .exe (LattePanda Windows)
+
+Untuk dipakai di lapangan tanpa perlu menginstal Python di tiap LattePanda:
+
+```bash
+pip install pyinstaller
+python build_exe.py
+```
+
+Menghasilkan `ground/dist/RCCarField/` berisi `RCCar.exe`, `Kalibrasi.exe`,
+`config.yaml`, `calibration.yaml`, dan `BACA-DULU.txt` — salin seluruh
+folder itu ke LattePanda. `config.yaml` dan `calibration.yaml` sengaja ada
+DI LUAR exe supaya bisa diedit langsung di lapangan tanpa build ulang.
+
+---
+
 ## Menyiapkan hardware
 
 Baca [docs/wiring.md](docs/wiring.md) sampai selesai. Ringkasnya:
@@ -139,6 +170,11 @@ Lalu isi kredensial WiFi di kedua firmware:
 
 - `firmware/rc_car_esp32/config.h` → `WIFI_SSID`, `WIFI_PASS`
 - `firmware/rc_cam_esp32/rc_cam_esp32.ino` → `WIFI_SSID`, `WIFI_PASS`
+
+Kalau Anda menyiapkan **lebih dari satu mobil**, `UNIT_ID` di kedua berkas
+itu (baris paling atas, sangat jelas ditandai) adalah satu-satunya hal lain
+yang perlu diubah per mobil — semua alamat IP diturunkan otomatis darinya.
+Lihat [docs/balapan-3-unit.md](docs/balapan-3-unit.md).
 
 > **Repo ini privat dan harus tetap privat.** Kredensial WiFi tertulis langsung di
 > `firmware/rc_car_esp32/config.h` dan `firmware/rc_cam_esp32/rc_cam_esp32.ino`.

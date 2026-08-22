@@ -11,19 +11,35 @@
 
 #pragma once
 
+// =================================================================
+// UNIT_ID -- SATU-SATUNYA BARIS YANG PERLU DIUBAH SAAT FLASH MOBIL
+// KE-2 DAN KE-3. Isi 1, 2, atau 3 sesuai mobil mana yang sedang di-flash.
+//
+// Semua yang bergantung padanya (IP mobil, penyaringan unit_id di
+// protokol v3) diturunkan otomatis dari angka ini -- lihat CAR_IP_4 di
+// bawah dan filter unit_id di link.cpp. Jangan ada dua mobil dengan
+// UNIT_ID yang sama menyala di jaringan yang sama; ground station unit lain
+// akan menolak paket dari mobil itu, tapi mobil itu sendiri masih akan
+// menjawab siapa pun yang kebetulan memakai unit_id yang sama.
+// =================================================================
+#define UNIT_ID 1
+
 // ----------------------------------------------------------------- jaringan
 
 #define WIFI_SSID "RCCar"
 #define WIFI_PASS "admin.admin"
 
-// IP statis. Router GL.iNet memakai subnet 192.168.8.x dengan gateway .1
-// dan DHCP otomatis di rentang .100-.249 -- .50 dipilih supaya tidak
-// bentrok dengan perangkat lain yang dapat IP otomatis.
-// Harus sama dengan network.car_ip di ground/config.yaml
+// IP statis, DITURUNKAN dari UNIT_ID: unit 1 = .50, unit 2 = .51, unit 3 = .52.
+// Router GL.iNet memakai subnet 192.168.8.x dengan gateway .1 dan DHCP
+// otomatis di rentang .100-.249 -- rentang .50-.52 dipilih supaya tidak
+// pernah bentrok dengan situ maupun dengan kamera (.60-.62, lihat
+// firmware/rc_cam_esp32/rc_cam_esp32.ino).
+// Harus sama dengan network.car_ip di ground/config.yaml (atau biarkan
+// ground/config.yaml menurunkannya sendiri lewat kunci `unit:`).
 #define CAR_IP_1 192
 #define CAR_IP_2 168
 #define CAR_IP_3 8
-#define CAR_IP_4 50
+#define CAR_IP_4 (49 + UNIT_ID)
 
 #define GATEWAY_IP_4 1              // gateway = x.x.x.1
 #define SUBNET_MASK 255, 255, 255, 0

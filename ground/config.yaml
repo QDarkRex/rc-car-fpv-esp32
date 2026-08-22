@@ -6,16 +6,37 @@
 # Kalibrasi mentah stir (indeks axis, nilai ujung) TIDAK ada di sini;
 # itu ada di calibration.yaml yang dihasilkan calibrate.py.
 
+# Nomor unit mobil yang dikendalikan LattePanda ini (1, 2, atau 3).
+# HARUS sama dengan UNIT_ID di firmware mobil dan kamera unit tersebut.
+#
+# Ini SATU-SATUNYA baris yang perlu diubah di tiga LattePanda saat balapan
+# dengan 3 mobil -- network.car_ip dan camera.stream_url di bawah diturunkan
+# otomatis darinya (unit 1 -> .50/.60, unit 2 -> .51/.61, unit 3 -> .52/.62).
+#
+# Urutan prioritas alamat mobil/kamera, dari yang paling menang:
+#   1. Argumen CLI --car / --cam saat menjalankan main.py
+#   2. network.car_ip / camera.stream_url kalau DITULIS EKSPLISIT di bawah
+#      (baris itu sengaja dikomentari di berkas bawaan ini supaya unit:
+#      yang menentukan -- buka komentarnya hanya kalau butuh alamat khusus
+#      di luar skema unit 1/2/3)
+#   3. Diturunkan dari unit: di atas
+unit: 1
+
 network:
-  # IP statis mobil. Router GL.iNet memakai subnet 192.168.8.x dengan
-  # gateway .1 dan DHCP otomatis di rentang .100-.249.
-  # Harus sama dengan CAR_IP di firmware/rc_car_esp32/config.h
-  car_ip: 192.168.8.50
+  # IP statis mobil, diturunkan dari `unit:` di atas kalau baris ini
+  # dikomentari. Buka komentar dan isi manual HANYA kalau mobil ini memakai
+  # alamat di luar skema unit 1/2/3 baku. Router GL.iNet memakai subnet
+  # 192.168.8.x dengan gateway .1 dan DHCP otomatis di rentang .100-.249.
+  # car_ip: 192.168.8.50
   car_port: 4210
 
   # Dipakai hanya sebagai cadangan selama mobil belum membalas, kalau-kalau
   # subnet ternyata berbeda dari dugaan. Setelah mobil membalas sekali,
-  # aplikasi mengunci ke alamat unicast-nya.
+  # aplikasi mengunci ke alamat unicast-nya. AMAN dipertahankan sebagai
+  # broadcast walau ada 3 mobil di jaringan yang sama: protokol v3 membawa
+  # unit_id di setiap paket, jadi mobil lain membuang paket broadcast yang
+  # bukan untuknya, dan ground station ini membuang balasan dari mobil lain
+  # sebelum sempat mengunci ke alamatnya. Lihat docs/protocol.md bagian 7.
   broadcast: 192.168.8.255
 
   control_rate_hz: 50      # laju kirim perintah; 50 Hz = tiap 20 ms
@@ -30,8 +51,10 @@ network:
   disarm_on_link_loss: false
 
 camera:
-  # Harus sama dengan CAM_IP di firmware/rc_cam_esp32
-  stream_url: http://192.168.8.60/stream
+  # URL stream kamera, diturunkan dari `unit:` di atas kalau baris ini
+  # dikomentari. Sama seperti car_ip: buka komentar hanya untuk alamat
+  # di luar skema baku. Harus sama dengan CAM_IP di firmware/rc_cam_esp32.
+  # stream_url: http://192.168.8.60/stream
   timeout_s: 3.0
 
 steering:

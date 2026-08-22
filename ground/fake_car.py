@@ -8,6 +8,7 @@ jadi kalau failsafe lolos uji di sini, perilakunya sama di mobil sungguhan.
 
 Jalankan:
     python fake_car.py
+    python fake_car.py --unit 2      # simulasikan mobil unit 2
     python fake_car.py --drop 20     # buang 20% paket, uji ketahanan link
 """
 
@@ -33,7 +34,7 @@ DRAIN_FULL = 320.0            # mV per detik tambahan pada gas penuh
 
 
 class FakeCar:
-    def __init__(self, port: int, drop_percent: float) -> None:
+    def __init__(self, port: int, drop_percent: float, unit: int = 1) -> None:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         # SENGAJA TANPA SO_REUSEADDR. Kalau dua simulator bisa bind ke port
         # yang sama, instance basi diam-diam ikut menjawab paket dan Anda akan
@@ -41,6 +42,7 @@ class FakeCar:
         self.sock.bind(("0.0.0.0", port))
         self.sock.setblocking(False)
         self.drop_percent = drop_percent
+        self.unit = unit
 
         self.boot = time.monotonic()
         self.armed = False
@@ -58,6 +60,9 @@ class FakeCar:
         self.rx_count = 0
         self.bad_count = 0
         self.dropped = 0
+        # Paket sehat tapi ditujukan ke unit lain -- lihat docs/protocol.md
+        # bagian 7. Dipisah dari bad_count karena bukan kerusakan protokol.
+        self.foreign_count = 0
 
     # -- penerimaan ------------------------------------------------------
     def poll(self) -> None:
@@ -77,6 +82,14 @@ class FakeCar:
             if ctrl is None:
                 # Paket rusak TIDAK menyegarkan pewaktu failsafe.
                 self.bad_count += 1
+                continue
+
+            if ctrl.unit_id != self.unit:
+                # Sama seperti firmware sungguhan: paket sehat tapi bukan
+                # untuk unit ini dibuang PERSIS seperti paket rusak -- TIDAK
+                # menyegarkan pewaktu failsafe. Lihat docs/protocol.md
+                # bagian 7 dan link.cpp::receivePackets().
+                self.foreign_count += 1
                 continue
 
             self.rx_count += 1
@@ -137,6 +150,7 @@ class FakeCar:
             flags |= proto.TFLAG_LOWBATT
 
         pkt = proto.pack_telemetry(
+            unit_id=self.unit,
             seq_echo=self.seq_echo,
             vbat_mv=int(self.vbat_mv),
             rssi=random.randint(-62, -48),
@@ -158,10 +172,10 @@ class FakeCar:
         bar_steer = self._bar(self.steer / proto.AXIS_MAX, signed=True)
         bar_thr = self._bar(self.applied_throttle / proto.AXIS_MAX, signed=True)
         return (
-            f"{state} | stir {bar_steer} {self.steer:+5d} "
+            f"UNIT {self.unit} | {state} | stir {bar_steer} {self.steer:+5d} "
             f"| gas {bar_thr} {self.applied_throttle:+5d} "
             f"| {self.vbat_mv / 1000:5.2f}V | rx {self.rx_count} "
-            f"bad {self.bad_count} drop {self.dropped}"
+            f"bad {self.bad_count} asing {self.foreign_count} drop {self.dropped}"
         )
 
     @staticmethod
@@ -179,6 +193,14 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Simulator mobil RC untuk uji sisi darat")
     ap.add_argument("--port", type=int, default=proto.CONTROL_PORT)
     ap.add_argument(
+        "--unit",
+        type=int,
+        default=1,
+        choices=(1, 2, 3),
+        metavar="N",
+        help="unit_id yang disimulasikan (1/2/3, default 1) -- lihat docs/protocol.md bagian 7",
+    )
+    ap.add_argument(
         "--drop",
         type=float,
         default=0.0,
@@ -188,13 +210,13 @@ def main() -> int:
     args = ap.parse_args()
 
     try:
-        car = FakeCar(args.port, args.drop)
+        car = FakeCar(args.port, args.drop, args.unit)
     except OSError as exc:
         print(f"[FAKE CAR] gagal bind UDP :{args.port} -> {exc}")
         print("[FAKE CAR] kemungkinan besar masih ada simulator lain yang jalan.")
         return 1
 
-    print(f"[FAKE CAR] mendengarkan UDP :{args.port}")
+    print(f"[FAKE CAR] mendengarkan UDP :{args.port}, unit {args.unit}")
     if args.drop:
         print(f"[FAKE CAR] simulasi kehilangan paket {args.drop}%")
     print("[FAKE CAR] Ctrl+C untuk berhenti\n")

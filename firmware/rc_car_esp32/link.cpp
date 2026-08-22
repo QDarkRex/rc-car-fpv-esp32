@@ -99,6 +99,18 @@ void CarLink::receivePackets() {
     ControlPacket packet;
     memcpy(&packet, _buffer, sizeof(packet));
 
+    if (packet.unit_id != UNIT_ID) {
+      // Paket sehat (magic/versi/CRC benar) tapi ditujukan ke mobil lain --
+      // kemungkinan besar ground station unit lain yang masih dalam fase
+      // discovery broadcast (lihat docs/protocol.md bagian 6 dan 7). Dibuang
+      // SEPERTI paket rusak: TIDAK menyegarkan _lastValidMs, supaya mobil
+      // yang salah kunci tidak diam-diam terlihat "sehat" di sisi darat yang
+      // salah itu. Dihitung terpisah dari _badCount supaya konsol bisa
+      // membedakan gangguan protokol dari cross-control murni.
+      _foreignCount++;
+      continue;
+    }
+
     if (!acceptSequence(packet.seq)) {
       continue;
     }
@@ -155,6 +167,7 @@ void CarLink::sendTelemetry(uint16_t seqEcho) {
   telemetry.magic0 = RC_TELE_MAGIC0;
   telemetry.magic1 = RC_TELE_MAGIC1;
   telemetry.version = RC_PROTOCOL_VERSION;
+  telemetry.unit_id = UNIT_ID;
   telemetry.seq_echo = seqEcho;
   telemetry.vbat_mv = _vbatMv;
   telemetry.rssi = (int8_t)constrain(WiFi.RSSI(), -128, 127);
