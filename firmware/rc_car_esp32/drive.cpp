@@ -29,6 +29,18 @@ void Drive::setCommand(int16_t steer, int16_t throttle, uint8_t brake) {
   _targetBrake = brake;
 }
 
+void Drive::setServoCalibration(int16_t steer) {
+  _targetSteer = constrain(steer, -RC_AXIS_MAX, RC_AXIS_MAX);
+  _targetThrottle = 0;
+  _targetBrake = 0;
+  _appliedThrottle = 0;
+  _direction = 0;
+  _braking = false;
+  _brakeDirection = 0;
+  _brakePulseStartMs = 0;
+  coast();
+}
+
 void Drive::neutral() {
   _targetThrottle = 0;
   _appliedThrottle = 0;

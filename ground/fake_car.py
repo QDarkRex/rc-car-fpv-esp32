@@ -46,6 +46,7 @@ class FakeCar:
 
         self.boot = time.monotonic()
         self.armed = False
+        self.servo_calibration = False
         self.failsafe = True
         self.prev_armed_flag = False
         self.last_valid = 0.0
@@ -53,6 +54,7 @@ class FakeCar:
         self.peer: tuple[str, int] | None = None
 
         self.steer = 0
+        self.applied_steer = 0
         self.throttle = 0
         self.applied_throttle = 0
 
@@ -98,16 +100,25 @@ class FakeCar:
             self.seq_echo = ctrl.seq
             self.steer = ctrl.steer
             self.throttle = ctrl.throttle
+            calibration_flag = bool(ctrl.flags & proto.FLAG_SERVO_CALIBRATION)
+            calibration_valid = (
+                calibration_flag and not ctrl.armed and
+                ctrl.throttle == 0 and ctrl.brake == 0 and not self.armed
+            )
+            self.servo_calibration = calibration_valid
             # Paket valid berarti tautan hidup. Failsafe murni soal tautan;
             # apakah boleh bergerak diatur terpisah oleh flag armed.
             self.failsafe = False
 
             # Arming hanya pada transisi 0 -> 1, persis seperti firmware.
-            if ctrl.armed and not self.prev_armed_flag:
+            if ctrl.armed and not calibration_flag and not self.prev_armed_flag:
                 self.armed = True
             elif not ctrl.armed:
                 self.armed = False
-            self.prev_armed_flag = ctrl.armed
+            elif calibration_flag:
+                # Calibration packets never arm, even when malformed.
+                self.armed = False
+            self.prev_armed_flag = ctrl.armed and not calibration_flag
 
             # Balas telemetri langsung pada paket kontrol tertentu, bukan dari
             # timer bebas. Dengan begitu seq_echo terkirim segera dan angka RTT
@@ -122,6 +133,8 @@ class FakeCar:
                 print("\n[FAKE CAR] FAILSAFE - paket kontrol putus, motor dinetralkan")
             self.failsafe = True
             self.armed = False
+            self.servo_calibration = False
+            self.applied_steer = 0
             # KUNCI KE POSISI TINGGI, bukan direset ke False.
             #
             # Kalau di-reset ke False, paket pertama yang datang setelah WiFi
@@ -131,6 +144,13 @@ class FakeCar:
             # mengirim ARMED=0 dulu sebelum ARMED=1 berpengaruh lagi.
             self.prev_armed_flag = True
 
+        if self.failsafe:
+            self.servo_calibration = False
+        self.applied_steer = (
+            self.steer
+            if self.servo_calibration or (self.armed and not self.failsafe)
+            else 0
+        )
         self.applied_throttle = self.throttle if (self.armed and not self.failsafe) else 0
 
         load = abs(self.applied_throttle) / proto.AXIS_MAX
@@ -169,10 +189,10 @@ class FakeCar:
             state = "ARMED   "
         else:
             state = "DISARMED"
-        bar_steer = self._bar(self.steer / proto.AXIS_MAX, signed=True)
+        bar_steer = self._bar(self.applied_steer / proto.AXIS_MAX, signed=True)
         bar_thr = self._bar(self.applied_throttle / proto.AXIS_MAX, signed=True)
         return (
-            f"UNIT {self.unit} | {state} | stir {bar_steer} {self.steer:+5d} "
+            f"UNIT {self.unit} | {state} | stir {bar_steer} {self.applied_steer:+5d} "
             f"| gas {bar_thr} {self.applied_throttle:+5d} "
             f"| {self.vbat_mv / 1000:5.2f}V | rx {self.rx_count} "
             f"bad {self.bad_count} asing {self.foreign_count} drop {self.dropped}"

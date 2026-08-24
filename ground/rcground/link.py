@@ -116,17 +116,26 @@ class Link:
 
     # -- pengiriman ------------------------------------------------------
     def send(
-        self, steer: float, throttle: float, armed: bool, brake: float = 0.0
+        self, steer: float, throttle: float, armed: bool, brake: float = 0.0,
+        *, servo_calibration: bool = False,
     ) -> None:
         """Kirim satu paket kendali.
 
         steer/throttle dalam rentang -1..1, brake dalam rentang 0..1.
         """
+        # Calibration is steering-only by construction. It never carries the
+        # armed flag and cannot carry motor/brake output.
+        if servo_calibration:
+            armed = False
+            throttle = 0.0
+            brake = 0.0
         # Pengaman berlapis: arming tidak boleh terkirim sebelum tautan terkunci.
         if armed and not self.locked:
             armed = False
 
-        flags = proto.FLAG_ARMED if armed else 0
+        flags = proto.FLAG_SERVO_CALIBRATION if servo_calibration else 0
+        if armed:
+            flags |= proto.FLAG_ARMED
 
         with self._lock:
             self._seq = (self._seq + 1) & 0xFFFF

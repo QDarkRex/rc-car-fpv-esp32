@@ -139,11 +139,44 @@ saklar mode.
 
 ---
 
+### Kalibrasi titik servo
+
+Untuk menyesuaikan output servo kiri/tengah/kanan tanpa mengubah firmware,
+jalankan:
+
+```bash
+python calibrate.py --servo
+```
+
+Wizard ini mengirim paket `SERVO_CALIBRATION` yang tetap disarmed dengan gas
+dan rem nol, sehingga servo dapat bergerak tanpa mengaktifkan motor. Pilih `L`,
+`C`, atau `R`, atur output dengan tombol panah sambil melihat servo, lalu tekan
+ENTER untuk menyimpan. `ESC`, error, atau penutupan jendela selalu mengirim
+beberapa paket center/netral. Nilai disimpan di blok `steering:` pada
+`config.yaml`; default `-1.0 / 0.0 / 1.0` mempertahankan perilaku lama.
+
+Uji tanpa mobil fisik dengan dua terminal dari folder `ground/`:
+
+```bash
+python fake_car.py
+python calibrate.py --servo --car 127.0.0.1
+```
+
+---
+
 ## Efek suara (SFX)
 
-Ground station memutar suara mesin (mengikuti intensitas pedal gas mentah),
-klakson, dan suara arm — semuanya diputar di laptop/LattePanda, bukan di
-mobil, jadi tidak mempengaruhi perintah yang dikirim ke ESP32.
+Ground station memutar suara mesin (ignition, idle, lalu crossfade rev yang
+mengikuti intensitas pedal gas), klakson, dan suara arm — semuanya diputar di
+laptop/LattePanda, bukan di mobil, jadi tidak mempengaruhi perintah yang
+dikirim ke ESP32.
+
+Pack gas default adalah profil **Sportscar CC0**: enam loop WAV bertingkat
+pitch dari OpenGameArt, dipakai sebagai layer RPM yang bersebelahan. Sumbernya
+adalah [racing car engine sound loops](https://opengameart.org/content/racing-car-engine-sound-loops),
+oleh domasx2, berlisensi CC0. Tidak ada aset Need for Speed atau aset game
+berhak cipta yang digunakan. Metadata dan durasi tiap file tercatat di
+`ground/assets/sfx/manifest.yaml`.
 
 Ganti pack suara kapan saja saat aplikasi berjalan, tanpa perlu berhenti:
 
@@ -158,11 +191,25 @@ aplikasi ditutup, jadi tidak perlu dipilih ulang tiap sesi. Untuk mematikan
 semua suara tanpa menghapus berkasnya, set `sfx.enabled: false` di
 `config.yaml`.
 
-Klakson bisa dipicu dari tombol keyboard `H` (satu kali tekan = satu kali
-bunyi, bukan loop) atau dari tombol fisik di stir. Tombol fisik untuk
+Klakson mengikuti selama tombol keyboard `H` atau tombol fisik di stir ditahan,
+lalu berhenti saat dilepas. Tombol fisik untuk
 klakson dikalibrasi lewat `calibrate.py` — langkah barunya muncul tepat
 setelah langkah kalibrasi tombol stop darurat, dengan wizard yang sama
 seperti langkah arm/estop.
+
+Untuk menguji audio tanpa stir, jaringan, kamera, atau RC car, jalankan dari
+folder `ground/`:
+
+```bash
+python sfx_demo.py
+```
+
+Gunakan `--silent` jika komputer tidak memiliki perangkat audio. Pengujian
+state otomatis yang tidak membutuhkan speaker dijalankan dengan:
+
+```bash
+python -m unittest discover -s . -p "test_*.py"
+```
 
 Berkas suara berasal dari dua sumber, lisensinya beda per kategori — lihat
 `ground/assets/sfx/manifest.yaml` untuk daftar lengkap judul dan sumbernya:

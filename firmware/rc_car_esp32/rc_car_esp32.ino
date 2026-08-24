@@ -127,10 +127,17 @@ void loop() {
   if (console.testMode()) {
     // Mode uji: perintah dari ground station DIABAIKAN sepenuhnya. Console
     // sudah memanggil drive.setCommand() sendiri di console.update().
-  } else if (carLink.failsafe() || !carLink.armed()) {
+  } else if (carLink.failsafe()) {
     // Netral bukan hanya "throttle nol": servo juga dikembalikan ke tengah
     // dan keadaan slew internal dinolkan, supaya arming berikutnya selalu
     // dimulai dari kondisi yang sama dan bisa diprediksi.
+    drive.neutral();
+  } else if (carLink.servoCalibration()) {
+    // Reserved steering-only calibration mode: raw servo steering is allowed,
+    // but motor/brake output is forcibly neutral and the car remains disarmed.
+    drive.setServoCalibration(carLink.servoCalibrationSteer());
+  } else if (!carLink.armed()) {
+    // Normal disarmed packets retain the historical servo-center behavior.
     drive.neutral();
   } else {
     drive.setCommand(carLink.steer(), carLink.throttle(), carLink.brake());

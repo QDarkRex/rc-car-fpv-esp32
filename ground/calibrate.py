@@ -10,11 +10,14 @@ itulah yang dipakai. Hasilnya ditulis ke calibration.yaml.
 
 Jalankan:
     python calibrate.py
+    python calibrate.py --servo   # kalibrasi output servo tanpa arm mobil
 """
 
 from __future__ import annotations
 
 import sys
+import time
+import argparse
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -23,6 +26,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pygame
 
 from rcground import config as cfg
+from rcground.link import Link
+from rcground.wheel import validate_servo_points
 
 WIDTH, HEIGHT = 900, 660
 BG = (16, 18, 22)
@@ -35,6 +40,7 @@ BLUE = (86, 168, 246)
 RED = (236, 84, 84)
 
 MOVE_THRESHOLD = 0.35   # perubahan minimum agar sebuah axis dianggap digerakkan
+SERVO_STEP = 0.01
 
 
 @dataclass
@@ -89,6 +95,103 @@ class ShifterResult:
     reverse_button: int | None = None
     up_button: int | None = None
     down_button: int | None = None
+
+
+def safe_center_packets(link, count: int = 5) -> None:
+    """Send only disarmed neutral packets, used on every wizard exit path."""
+    for _ in range(max(1, count)):
+        link.send(0.0, 0.0, False, 0.0)
+        time.sleep(0.01)
+
+
+def servo_preview_packet(link, steer: float) -> None:
+    """Preview raw steering with the reserved steering-only flag."""
+    link.send(steer, 0.0, False, 0.0, servo_calibration=True)
+
+
+def _servo_defaults(config: dict) -> list[float]:
+    steering = config.get("steering", {})
+    values = [
+        float(steering.get("servo_left", -1.0)),
+        float(steering.get("servo_center", 0.0)),
+        float(steering.get("servo_right", 1.0)),
+    ]
+    try:
+        validate_servo_points(*values)
+    except (TypeError, ValueError):
+        values = [-1.0, 0.0, 1.0]
+    return values
+
+
+def run_servo_wizard(screen, font_big, font, font_small, link, config) -> tuple | None:
+    """Tune left/center/right outputs while sending disarmed packets only."""
+    values = _servo_defaults(config)
+    labels = ("LEFT", "CENTER", "RIGHT")
+    selected = 1
+    error = ""
+    clock = pygame.time.Clock()
+    done = False
+    try:
+        while not done:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT or (
+                    event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE
+                ):
+                    return None
+                if event.type != pygame.KEYDOWN:
+                    continue
+                if event.key in (pygame.K_l, pygame.K_1):
+                    selected = 0
+                elif event.key in (pygame.K_c, pygame.K_2):
+                    selected = 1
+                elif event.key in (pygame.K_r, pygame.K_3):
+                    selected = 2
+                elif event.key in (pygame.K_LEFT, pygame.K_DOWN):
+                    values[selected] = max(-1.0, values[selected] - SERVO_STEP)
+                elif event.key in (pygame.K_RIGHT, pygame.K_UP):
+                    values[selected] = min(1.0, values[selected] + SERVO_STEP)
+                elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                    try:
+                        validate_servo_points(*values)
+                    except ValueError as exc:
+                        error = str(exc)
+                    else:
+                        done = True
+                        error = ""
+
+            # This is deliberately the only control call in this wizard:
+            # steering candidate, throttle 0, brake 0, armed False.
+            servo_preview_packet(link, values[selected])
+            screen.fill(BG)
+            screen.blit(font_big.render("Kalibrasi servo kiri/tengah/kanan", True, WHITE), (40, 36))
+            screen.blit(
+                font.render(
+                    f"Link: {'terkunci' if link.locked else 'mencari mobil...'}  "
+                    f"(telemetri: {'aktif' if link.connected else 'menunggu'})",
+                    True, GREEN if link.connected else AMBER,
+                ), (40, 86)
+            )
+            screen.blit(font_small.render(
+                "L/C/R pilih titik | panah ubah output | ENTER simpan | ESC batal",
+                True, DIM,
+            ), (40, 122))
+            y = 190
+            for index, (label, value) in enumerate(zip(labels, values)):
+                color = BLUE if index == selected else WHITE
+                screen.blit(font.render(f"{label:6s} {value:+.3f}", True, color), (80, y))
+                y += 42
+            screen.blit(font_small.render(
+                f"Sedang mengirim {labels[selected]} = {values[selected]:+.3f}; "
+                "roda tetap DISARMED dan gas/rem netral.", True, AMBER,
+            ), (40, 350))
+            if error:
+                screen.blit(font_small.render(error, True, RED), (40, HEIGHT - 70))
+            pygame.display.flip()
+            clock.tick(50)
+        return tuple(values)
+    finally:
+        # Covers cancel, window close, keyboard interrupt, and render errors.
+        safe_center_packets(link)
 
 
 def choose_joystick(screen, font, font_small) -> "pygame.joystick.Joystick | None":
@@ -417,6 +520,19 @@ def run_shifter_wizard(screen, font_big, font, font_small, stick) -> ShifterResu
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Kalibrasi stir atau output servo RC Car")
+    parser.add_argument(
+        "--servo",
+        action="store_true",
+        help="kalibrasi titik output servo melalui Link tanpa mengubah kalibrasi wheel",
+    )
+    parser.add_argument(
+        "--car",
+        metavar="HOST",
+        help="alamat mobil untuk mode --servo (mis. 127.0.0.1 untuk fake_car)",
+    )
+    args = parser.parse_args()
+
     pygame.init()
     pygame.display.set_caption("Kalibrasi Stir — RC Car")
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -432,6 +548,37 @@ def main() -> int:
     font_big = load_font(26, bold=True)
     font = load_font(19)
     font_small = load_font(15)
+
+    if args.servo:
+        link = None
+        try:
+            config = cfg.load_config()
+            if args.car:
+                config["network"]["car_ip"] = args.car
+                config["network"]["broadcast"] = args.car
+            link = Link(config)
+            result = run_servo_wizard(screen, font_big, font, font_small, link, config)
+            if result is None:
+                print("Dibatalkan, servo calibration tidak diubah.")
+                return 1
+            path = cfg.save_servo_calibration(*result)
+            print(
+                "Kalibrasi servo selesai: "
+                f"left={result[0]:+.3f}, center={result[1]:+.3f}, right={result[2]:+.3f}"
+            )
+            print(f"Disimpan ke {path}")
+            return 0
+        except (OSError, ValueError, RuntimeError) as exc:
+            print(f"Kalibrasi servo gagal: {exc}")
+            return 1
+        finally:
+            if link is not None:
+                try:
+                    safe_center_packets(link)
+                except OSError:
+                    pass
+                link.close()
+            pygame.quit()
 
     stick = choose_joystick(screen, font, font_small)
     if stick is None:

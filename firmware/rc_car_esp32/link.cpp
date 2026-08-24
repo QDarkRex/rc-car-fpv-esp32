@@ -131,12 +131,22 @@ void CarLink::handleControl(const ControlPacket& packet) {
   // Boleh-tidaknya motor bergerak diatur terpisah oleh flag armed.
   _failsafe = false;
 
+  const bool armedFlag = (packet.flags & RC_FLAG_ARMED) != 0;
+  const bool calibrationFlag = (packet.flags & RC_FLAG_SERVO_CALIBRATION) != 0;
+  const bool calibrationValid = calibrationFlag && !armedFlag && !_armed &&
+                                packet.throttle == 0 && packet.brake == 0;
+  // A packet carrying the calibration bit can never participate in arming,
+  // even if a malformed sender also sets ARMED.
+  const bool normalArmedFlag = armedFlag && !calibrationFlag;
+  _servoCalibration = calibrationValid;
+  _servoSteer = calibrationValid ? constrain(packet.steer, -RC_AXIS_MAX, RC_AXIS_MAX) : 0;
+
+  // A calibration flag with any motor/armed combination is rejected and
+  // immediately loses its steering-only privilege.
   _steer = packet.steer;
   _throttle = packet.throttle;
   _brake = packet.brake;
-
-  const bool armedFlag = (packet.flags & RC_FLAG_ARMED) != 0;
-  if (armedFlag) {
+  if (normalArmedFlag) {
     // Hanya transisi 0 -> 1 yang meng-arm. Flag yang terus bernilai 1
     // TIDAK meng-arm ulang dengan sendirinya.
     if (!_prevArmedFlag) {
@@ -147,7 +157,7 @@ void CarLink::handleControl(const ControlPacket& packet) {
     _armed = false;
     Serial.println("[LINK] disarmed");
   }
-  _prevArmedFlag = armedFlag;
+  _prevArmedFlag = normalArmedFlag;
 
   // Balas telemetri langsung pada paketnya, bukan dari timer bebas, supaya
   // seq_echo terkirim segera dan RTT yang diukur sisi darat benar-benar
@@ -215,6 +225,15 @@ void CarLink::update() {
   receivePackets();
   sampleBattery();
 
+  // Kalibrasi servo selalu punya timeout sendiri, termasuk pada instalasi
+  // yang sengaja mematikan failsafe motor lewat FAILSAFE_ENABLED. Kalau
+  // wizard, laptop, atau WiFi berhenti mengirim, hak steering-only ini tidak
+  // boleh tertinggal aktif tanpa batas.
+  if (_servoCalibration && (millis() - _lastValidMs) > FAILSAFE_TIMEOUT_MS) {
+    _servoCalibration = false;
+    _servoSteer = 0;
+  }
+
 #if !FAILSAFE_ENABLED
   // Failsafe dimatikan lewat config.h: perintah terakhir dipertahankan
   // walaupun paket berhenti. Lihat penjelasan lengkap di config.h.
@@ -229,6 +248,8 @@ void CarLink::update() {
     _steer = 0;
     _throttle = 0;
     _brake = 0;
+    _servoCalibration = false;
+    _servoSteer = 0;
 
     // KUNCI KE POSISI TINGGI, bukan direset ke false.
     //

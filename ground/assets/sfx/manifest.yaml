@@ -67,6 +67,58 @@ gas:
     duration_s: 37.36
     author: "EwanPenman11 (Freesound)"
     license: "CC0"
+  # Profil default Sportscar CC0. These six short, pitch-stepped loops are
+  # adjacent RPM layers; SfxEngine crossfades only the neighboring pair.
+  # Source: https://opengameart.org/content/racing-car-engine-sound-loops
+  # Author: domasx2 | License: CC0
+  - file: sportscar_cc0/loop_0.wav
+    title: "Sportscar CC0 RPM 0 (idle)"
+    duration_s: 0.8641
+    author: "domasx2 (OpenGameArt)"
+    license: "CC0"
+    source: "https://opengameart.org/content/racing-car-engine-sound-loops"
+    profile: "sportscar_cc0"
+    rpm_layer: 0
+  - file: sportscar_cc0/loop_1.wav
+    title: "Sportscar CC0 RPM 1"
+    duration_s: 0.6667
+    author: "domasx2 (OpenGameArt)"
+    license: "CC0"
+    source: "https://opengameart.org/content/racing-car-engine-sound-loops"
+    profile: "sportscar_cc0"
+    rpm_layer: 1
+  - file: sportscar_cc0/loop_2.wav
+    title: "Sportscar CC0 RPM 2"
+    duration_s: 0.6826
+    author: "domasx2 (OpenGameArt)"
+    license: "CC0"
+    source: "https://opengameart.org/content/racing-car-engine-sound-loops"
+    profile: "sportscar_cc0"
+    rpm_layer: 2
+  - file: sportscar_cc0/loop_3.wav
+    title: "Sportscar CC0 RPM 3"
+    duration_s: 0.6160
+    author: "domasx2 (OpenGameArt)"
+    license: "CC0"
+    source: "https://opengameart.org/content/racing-car-engine-sound-loops"
+    profile: "sportscar_cc0"
+    rpm_layer: 3
+  - file: sportscar_cc0/loop_4.wav
+    title: "Sportscar CC0 RPM 4"
+    duration_s: 0.6308
+    author: "domasx2 (OpenGameArt)"
+    license: "CC0"
+    source: "https://opengameart.org/content/racing-car-engine-sound-loops"
+    profile: "sportscar_cc0"
+    rpm_layer: 4
+  - file: sportscar_cc0/loop_5.wav
+    title: "Sportscar CC0 RPM 5 (high)"
+    duration_s: 0.6296
+    author: "domasx2 (OpenGameArt)"
+    license: "CC0"
+    source: "https://opengameart.org/content/racing-car-engine-sound-loops"
+    profile: "sportscar_cc0"
+    rpm_layer: 5
 
 horn:
   - file: car_horn.mp3

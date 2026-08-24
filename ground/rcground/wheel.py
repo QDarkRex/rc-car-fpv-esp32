@@ -45,6 +45,29 @@ def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
+def validate_servo_points(left: float, center: float, right: float) -> None:
+    """Raise ValueError unless servo calibration is ordered and normalized."""
+    values = (float(left), float(center), float(right))
+    left, center, right = values
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("titik servo harus berupa angka hingga")
+    if not all(-1.0 <= value <= 1.0 for value in values):
+        raise ValueError("titik servo harus berada di rentang -1..1")
+    if not left < center < right:
+        raise ValueError("servo_left harus lebih kecil dari servo_center dan servo_right")
+
+
+def map_servo_output(
+    value: float, left: float = -1.0, center: float = 0.0, right: float = 1.0
+) -> float:
+    """Map processed steering input to an asymmetric servo output."""
+    validate_servo_points(left, center, right)
+    value = _clamp(float(value), -1.0, 1.0)
+    if value <= 0.0:
+        return left + (value + 1.0) * (center - left)
+    return center + value * (right - center)
+
+
 def _normalize_bipolar(raw: float, low: float, center: float, high: float) -> float:
     """Petakan axis dua arah (stir) ke -1..1, menghormati titik tengah kalibrasi."""
     if raw >= center:
@@ -82,6 +105,7 @@ class WheelState:
     arm_edge: bool = False      # True hanya pada frame tombol arm ditekan
     estop_held: bool = False
     horn_edge: bool = False     # True hanya pada frame tombol klakson pada stir BARU ditekan
+    horn_held: bool = False     # True selama tombol klakson pada stir ditahan
     connected: bool = False
     source: str = "none"
     buttons: dict = field(default_factory=dict)
@@ -271,11 +295,11 @@ class Wheel:
         # .get("horn") aman kembalikan None kalau calibration.yaml lama belum
         # punya kunci ini (pengguna belum kalibrasi ulang lewat calibrate.py)
         # -- dan button(None) di atas sudah menangani None -> False.
-        # Edge-detection sama persis polanya dengan arm_edge di atas: klakson
-        # SEKALI tekan = SEKALI putar suara (lihat SfxEngine.play_horn di
-        # sfx.py), bukan loop selama tombol ditahan.
+        # Edge tetap dipertahankan untuk integrasi lama; horn_held dipakai
+        # SfxEngine agar suara mengikuti durasi tombol ditahan.
         horn_now = button(buttons_cfg.get("horn"))
         state.horn_edge = horn_now and not self._prev_horn
+        state.horn_held = horn_now
         self._prev_horn = horn_now
         state.buttons = {i: js.get_button(i) for i in range(js.get_numbuttons())}
 
@@ -308,6 +332,16 @@ class Wheel:
         steer = _clamp(steer + self._trim, -1.0, 1.0)
         steer *= float(st.get("max_angle", 1.0))
         steer = _clamp(steer, -1.0, 1.0)
+        try:
+            steer = map_servo_output(
+                steer,
+                float(st.get("servo_left", -1.0)),
+                float(st.get("servo_center", 0.0)),
+                float(st.get("servo_right", 1.0)),
+            )
+        except (TypeError, ValueError):
+            # Malformed optional calibration retains historical 1:1 behavior.
+            steer = _clamp(steer, -1.0, 1.0)
 
         if self.shifter_enabled:
             target, brake_out = self._process_geared(gas, brake, gear, th)
@@ -438,8 +472,22 @@ class KeyboardWheel:
         else:
             self._throttle = target
 
+        keyboard_steer = _clamp(self._steer + self._trim, -1.0, 1.0)
+        steering = self.tuning.get("steering", {})
+        keyboard_steer *= float(steering.get("max_angle", 1.0))
+        keyboard_steer = _clamp(keyboard_steer, -1.0, 1.0)
+        try:
+            keyboard_steer = map_servo_output(
+                keyboard_steer,
+                float(steering.get("servo_left", -1.0)),
+                float(steering.get("servo_center", 0.0)),
+                float(steering.get("servo_right", 1.0)),
+            )
+        except (TypeError, ValueError):
+            pass
+
         return WheelState(
-            steer=_clamp(self._steer + self._trim, -1.0, 1.0),
+            steer=keyboard_steer,
             throttle=_clamp(self._throttle, -1.0, 1.0),
             raw_steer=self._steer,
             gas=gas,

@@ -79,7 +79,15 @@ mobil sama sekali.
 | Bit | Nama | Arti |
 |---:|---|---|
 | 0 | `ARMED` | Mobil boleh menggerakkan motor. Jika 0, mobil **wajib** menetralkan motor. |
-| 1–7 | — | dicadangkan, harus 0 |
+| 1 | `SERVO_CALIBRATION` | Mode steering-only: wajib `ARMED=0`, `throttle=0`, `brake=0`; firmware boleh menggerakkan servo raw untuk kalibrasi, motor tetap coast/netral. |
+| 2–7 | — | dicadangkan, harus 0 |
+
+`SERVO_CALIBRATION` hanya diterima ketika mobil sudah disarmed. Kombinasi
+invalid (armed, throttle nonzero, atau brake nonzero) dibuang sebagai mode
+kalibrasi dan tidak boleh mengaktifkan motor maupun servo calibration. Failsafe
+selalu menghapus mode ini. Mode kalibrasi juga punya timeout sendiri walaupun
+failsafe motor dinonaktifkan. Paket center/netral biasa tanpa bit 1 dipakai
+untuk keluar dari mode kalibrasi.
 
 ---
 

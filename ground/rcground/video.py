@@ -122,9 +122,12 @@ class MjpegStream:
                 return
             buffer.extend(chunk)
 
-            # Ambil setiap JPEG utuh yang sudah lengkap di dalam buffer.
+            # Ambil frame utuh yang sudah lengkap di dalam buffer. Bila satu
+            # read1() membawa beberapa frame, hanya frame terakhir yang
+            # dipublikasikan; frame lama dibuang sebelum UI mendekode.
             # Pencarian SOI/EOI dipakai alih-alih parsing boundary karena tahan
             # terhadap variasi format header antar firmware kamera.
+            newest: bytes | None = None
             while True:
                 start = buffer.find(SOI)
                 if start < 0:
@@ -140,5 +143,7 @@ class MjpegStream:
                     break
 
                 end += 2
-                self._publish(bytes(buffer[start:end]))
+                newest = bytes(buffer[start:end])
                 del buffer[:end]
+            if newest is not None:
+                self._publish(newest)

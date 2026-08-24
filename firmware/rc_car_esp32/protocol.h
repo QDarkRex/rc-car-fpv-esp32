@@ -21,6 +21,7 @@
 
 // Flag paket kontrol
 #define RC_FLAG_ARMED     0x01
+#define RC_FLAG_SERVO_CALIBRATION 0x02  // steering-only, always disarmed/netral
 
 // Flag paket telemetri
 #define RC_TFLAG_ARMED    0x01

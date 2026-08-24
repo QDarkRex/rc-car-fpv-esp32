@@ -20,6 +20,7 @@ TELE_MAGIC = b"RT"
 
 # Flag paket kontrol
 FLAG_ARMED = 0x01
+FLAG_SERVO_CALIBRATION = 0x02  # steering-only, must remain disarmed/netral
 
 # Flag paket telemetri
 TFLAG_ARMED = 0x01
@@ -63,6 +64,10 @@ class Control:
     @property
     def armed(self) -> bool:
         return bool(self.flags & FLAG_ARMED)
+
+    @property
+    def servo_calibration(self) -> bool:
+        return bool(self.flags & FLAG_SERVO_CALIBRATION)
 
 
 @dataclass(frozen=True)

@@ -69,6 +69,11 @@ steering:
   expo: 0.30          # 0 = linear; makin besar makin halus di sekitar tengah
   max_angle: 1.0      # batasi sudut belok maksimum (0..1)
   invert: false       # true kalau arah belok terbalik dari arah stir
+  # Titik keluaran servo (dinormalisasi -1..1), hasil wizard --servo.
+  # Nilai default mempertahankan mapping lama 1:1.
+  servo_left: -1.0
+  servo_center: 0.0
+  servo_right: 1.0
 
 throttle:
   deadzone: 0.05
@@ -113,6 +118,6 @@ display:
 
 sfx:
   enabled: true            # matikan semua suara tanpa uninstall/hapus file
-  gas_pack: 0               # indeks pack gas aktif, 0 = "Sports car accelerating (medium)"
+  gas_pack: 9               # default Sportscar CC0 (indeks 0-8 tetap pack lama)
   horn_pack: 3              # 3 = "Truck horn"
   arm_pack: 2               # 0 = "Car engine start"

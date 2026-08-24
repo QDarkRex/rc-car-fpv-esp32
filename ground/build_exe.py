@@ -50,6 +50,8 @@ ISI FOLDER INI
   Kalibrasi.exe       wizard kalibrasi stir PXN V9 -- jalankan ini dulu
                       sebelum RCCar.exe kalau stir baru dipasang atau
                       saklar mode PXN digeser
+                      Jalankan `Kalibrasi.exe --servo` untuk menyesuaikan
+                      titik servo kiri/tengah/kanan tanpa arm mobil.
   config.yaml         semua setelan (jaringan, kurva gas, batas kecepatan,
                       trim, dll). Edit dengan Notepad biasa, lalu jalankan
                       ulang RCCar.exe -- TIDAK perlu build ulang exe-nya.

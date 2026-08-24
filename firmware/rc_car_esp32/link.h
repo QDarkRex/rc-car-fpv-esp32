@@ -23,10 +23,14 @@ class CarLink {
   // atas perintah pengemudi; failsafe dan disarm tetap memakai coast() di
   // Drive, bukan mengerem otomatis (lihat komentar coast() di drive.cpp).
   int16_t steer() const { return _armed ? _steer : 0; }
+  int16_t servoCalibrationSteer() const {
+    return _servoCalibration ? _servoSteer : 0;
+  }
   int16_t throttle() const { return _armed ? _throttle : 0; }
   uint8_t brake() const { return _armed ? _brake : 0; }
 
   bool armed() const { return _armed; }
+  bool servoCalibration() const { return _servoCalibration && !_failsafe && !_armed; }
   bool failsafe() const { return _failsafe; }
   bool wifiConnected() const { return _wifiConnected; }
   uint16_t vbatMv() const { return _vbatMv; }
@@ -66,6 +70,8 @@ class CarLink {
   bool _armed = false;
   bool _failsafe = true;
   bool _prevArmedFlag = false;
+  bool _servoCalibration = false;
+  int16_t _servoSteer = 0;
 
   uint16_t _lastSeq = 0;
   bool _hasSeq = false;

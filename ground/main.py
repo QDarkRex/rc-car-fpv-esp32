@@ -15,7 +15,7 @@ Tombol:
     SPASI   arm / disarm
     E       stop darurat (langsung disarm)
     [ ]     geser trim stir kiri / kanan
-    H       klakson (satu kali tekan = satu kali bunyi)
+    H       klakson (tahan untuk membunyikan)
     G       ganti pack suara gas berikutnya (Shift+G = sebelumnya)
     N       ganti pack suara klakson berikutnya (Shift+N = sebelumnya)
     M       ganti pack suara arm berikutnya (Shift+M = sebelumnya)
@@ -116,10 +116,6 @@ class GroundStation:
         self._frame_id_shown = -1
         self._scaled_cache: tuple = (None, None)
 
-        # Edge-detection untuk klakson keyboard, pola sama seperti horn_edge
-        # di wheel.py -- lihat run() untuk pemakaiannya.
-        self._prev_keyboard_horn = False
-
     # -- penyiapan -------------------------------------------------------
     def _make_wheel(self, force_keyboard: bool):
         if force_keyboard:
@@ -169,19 +165,21 @@ class GroundStation:
 
         self.armed = True
         self.estop_latched = False
-        self.sfx.play_arm()
+        self.sfx.start_engine()
         self._notify("ARMED — mobil siap bergerak")
 
     def _disarm(self, reason: str) -> None:
         if self.armed:
             self._notify(reason)
         self.armed = False
+        self.sfx.stop_engine()
         self.wheel.reset_throttle()
         self.wheel.reset_gear()
 
     def _emergency_stop(self) -> None:
         self.estop_latched = True
         self.armed = False
+        self.sfx.stop_engine(fast=True)
         self.wheel.reset_throttle()
         self.wheel.reset_gear()
         self._notify("STOP DARURAT — tekan SPASI untuk arm ulang")
@@ -395,18 +393,11 @@ class GroundStation:
                 telemetry.failsafe if telemetry else False
             ) or not self.link.connected
 
-            # Klakson: SEKALI tekan (stir ATAU tombol H keyboard) = SEKALI
-            # putar suara dari awal sampai selesai, seperti klakson mobil
-            # sungguhan yang di-"pip" sekali -- bukan loop selama ditahan.
-            # get_pressed() masih dipoll tiap frame (bukan event KEYDOWN)
-            # supaya konsisten dengan pola horn_edge di wheel.py, tapi edge
-            # dihitung manual di sini karena keyboard tidak lewat WheelState.
+            # Klakson mengikuti level tombol; tahan/lepas tidak me-restart
+            # suara di setiap frame.
             keyboard_horn_now = pygame.key.get_pressed()[pygame.K_h]
-            keyboard_horn_edge = keyboard_horn_now and not self._prev_keyboard_horn
-            self._prev_keyboard_horn = keyboard_horn_now
-            if state.horn_edge or keyboard_horn_edge:
-                self.sfx.play_horn()
-            self.sfx.update_gas(state.gas, active=self.armed and not failsafe)
+            self.sfx.update_horn(state.horn_held or keyboard_horn_now)
+            self.sfx.update(dt, state.gas, active=self.armed and not failsafe)
 
             self._decode_latest_frame()
             context = self._build_context(state, throttle_out, brake_out, failsafe)
@@ -441,6 +432,9 @@ class GroundStation:
             )
         except (OSError, ValueError) as exc:
             print(f"Gagal menyimpan pilihan pack SFX: {exc}")
+
+        self.sfx.stop_engine(fast=True)
+        self.sfx.update_horn(False)
 
         print("\nMenutup - mengirim perintah netral...")
         # Beberapa paket disarm berturut-turut supaya mobil pasti berhenti

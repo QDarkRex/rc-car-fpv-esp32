@@ -71,6 +71,9 @@ DEFAULT_CONFIG: dict = {
         "expo": 0.30,
         "max_angle": 1.0,
         "invert": False,
+        "servo_left": -1.0,
+        "servo_center": 0.0,
+        "servo_right": 1.0,
     },
     "throttle": {
         "deadzone": 0.05,
@@ -91,7 +94,7 @@ DEFAULT_CONFIG: dict = {
     "display": {"width": 960, "height": 720, "vsync": False},
     "sfx": {
         "enabled": True,
-        "gas_pack": 0,
+        "gas_pack": 9,
         "horn_pack": 0,
         "arm_pack": 0,
     },
@@ -215,6 +218,70 @@ def save_trim(trim: float, path: Path | None = None) -> Path:
 
     shutil.copyfile(path, path.with_suffix(".yaml.bak"))
     path.write_text("".join(lines), encoding="utf-8")
+    return path
+
+
+def save_servo_calibration(
+    left: float, center: float, right: float, path: Path | None = None
+) -> Path:
+    """Persist ordered steering servo points without rewriting user comments."""
+    from .wheel import validate_servo_points
+
+    validate_servo_points(left, center, right)
+    path = path or CONFIG_PATH
+    if not path.exists():
+        raise FileNotFoundError(f"{path} tidak ditemukan")
+
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    targets = {
+        "servo_left": float(left),
+        "servo_center": float(center),
+        "servo_right": float(right),
+    }
+    written = {key: False for key in targets}
+    in_steering = False
+    steering_found = False
+    steering_end = len(lines)
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not line[0].isspace():
+            if in_steering:
+                steering_end = index
+                in_steering = False
+            if stripped.startswith("steering:"):
+                in_steering = True
+                steering_found = True
+            continue
+        if not in_steering:
+            continue
+        key = stripped.split(":")[0].strip()
+        if key not in targets:
+            continue
+        indent = line[: len(line) - len(line.lstrip())]
+        replacement = f"{indent}{key}: {targets[key]:.4f}"
+        if "#" in line:
+            column = line.index("#")
+            replacement += " " * max(2, column - len(replacement)) + line[column:].rstrip("\n")
+        lines[index] = replacement + "\n"
+        written[key] = True
+
+    if not steering_found:
+        raise ValueError("blok steering tidak ditemukan di config.yaml")
+    missing = [
+        f"  {key}: {value:.4f}\n"
+        for key, value in targets.items()
+        if not written[key]
+    ]
+    if missing:
+        lines[steering_end:steering_end] = missing
+
+    backup = path.with_suffix(path.suffix + ".bak")
+    shutil.copyfile(path, backup)
+    temp = path.with_suffix(path.suffix + ".tmp")
+    temp.write_text("".join(lines), encoding="utf-8")
+    temp.replace(path)
     return path
 
 

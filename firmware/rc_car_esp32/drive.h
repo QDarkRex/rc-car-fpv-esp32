@@ -23,6 +23,10 @@ class Drive {
   //           atas throttle -- lihat update() di drive.cpp.
   void setCommand(int16_t steer, int16_t throttle, uint8_t brake);
 
+  // Steering-only calibration: motor output is forced neutral/coast while
+  // update() still applies the requested servo position.
+  void setServoCalibration(int16_t steer);
+
   // Netralkan segera: motor berhenti, servo ke tengah.
   // Dipanggil saat failsafe, disarm, dan saat boot.
   void neutral();
