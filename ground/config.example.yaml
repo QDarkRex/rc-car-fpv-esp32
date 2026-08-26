@@ -48,6 +48,28 @@ network:
   control_rate_hz: 50      # laju kirim perintah; 50 Hz = tiap 20 ms
   link_timeout_ms: 500     # telemetri hilang selama ini -> tautan dianggap putus
 
+  # Masa tenggang sebelum TAMPILAN dan SUARA menganggap tautan benar-benar
+  # putus. Kedipan yang lebih pendek dari ini diabaikan total.
+  #
+  # Kenapa perlu: telemetri datang 10 Hz, jadi link_timeout_ms 500 di atas
+  # sudah jatuh hanya karena 5 paket berturut hilang. Di 2,4 GHz yang padat,
+  # RTO sepersekian detik itu normal -- dan tanpa tenggang ini satu kedipan
+  # sesaat mengubah tiga hal sekaligus: banner jadi FAILSAFE, HUD menampilkan
+  # DISARMED padahal mobil masih armed, dan suara mesin dimatikan lalu
+  # dinyalakan ulang dari awal sehingga suara starter terdengar berulang.
+  #
+  # 30 detik = praktis tidak ada gangguan jaringan wajar yang bisa memicu
+  # banner FAILSAFE, melepas arming, atau memutar ulang suara starter.
+  #
+  # KONSEKUENSI YANG DISENGAJA: kalau tautan benar-benar mati, banner
+  # FAILSAFE baru muncul setelah 30 detik. Indikator cepat yang TETAP ada
+  # selama itu adalah baris TELEM di panel kanan -- ia jatuh ke 0 Hz dalam
+  # hitungan detik, jauh sebelum banner berubah.
+  #
+  # Turunkan (mis. 2500) kalau ingin peringatan visual lebih cepat. Syarat
+  # ARM tetap memakai link_timeout_ms mentah, tidak terpengaruh angka ini.
+  link_grace_ms: 30000
+
   # Otomatis disarm saat telemetri putus. DIMATIKAN, sepasang dengan
   # FAILSAFE_ENABLED 0 di firmware -- kalau cuma salah satu yang dimatikan,
   # sisi yang lain tetap akan menghentikan mobil dan Anda akan bingung kenapa.
@@ -62,6 +84,15 @@ camera:
   # di luar skema baku. Harus sama dengan CAM_IP di firmware/rc_cam_esp32.
   # stream_url: http://192.168.8.60/stream
   timeout_s: 3.0
+
+  # Jeda antar pengukuran PING kamera (baris PING di HUD). Diukur dengan
+  # membuka koneksi TCP ke port HTTP kamera lalu menutupnya lagi.
+  #
+  # JANGAN diperkecil di bawah ~1 detik. Firmware kamera hanya melayani 3
+  # socket sekaligus dengan lru_purge_enable: stream memakai satu, probe ini
+  # satu lagi sesaat. Kalau probe menumpuk sampai slot habis, LRU purge bisa
+  # memutus koneksi stream yang sedang berjalan.
+  ping_interval_s: 2.0
 
 steering:
   deadzone: 0.03      # abaikan getaran kecil di sekitar tengah (0..1)
@@ -102,9 +133,20 @@ throttle:
 shifter:
   enabled: true
   # Batas kecepatan tiap gigi maju, sebagai kelipatan throttle.max_forward.
+  #
+  # SEMUANYA 1.00 = gigi maju TIDAK membatasi kecepatan. Gigi 1 sampai 6
+  # sama persis, semuanya bisa 100%. Memindah gigi maju hanya mengubah
+  # angka di HUD, tidak mengubah tenaga sedikit pun.
+  #
+  # N dan R TIDAK terpengaruh daftar ini dan tetap bekerja seperti biasa:
+  # N selalu throttle 0 (tidak bisa jalan), R memakai throttle.max_reverse.
+  #
+  # Nilai lama yang membatasi kecepatan: [0.35, 0.55, 0.75, 0.90, 1.00, 1.00]
   # Gigi rendah memberi seluruh jangkauan pedal untuk rentang kecepatan
-  # sempit -- itulah yang membuat manuver rapat jadi mungkin dengan L298N.
-  gear_ratios: [0.35, 0.55, 0.75, 0.90, 1.00, 1.00]
+  # sempit, yang membuat manuver rapat lebih mudah dengan L298N. Kembalikan
+  # angka itu kalau ingin perilaku tersebut. Jumlah elemen menentukan gigi
+  # maju tertinggi (6).
+  gear_ratios: [1.00, 1.00, 1.00, 1.00, 1.00, 1.00]
   require_neutral_to_arm: true
 
 brake:
@@ -115,6 +157,18 @@ display:
   width: 960
   height: 720
   vsync: false
+
+  # Penghalusan saat video diperbesar ke ukuran jendela. true lebih halus,
+  # false jauh lebih murah di CPU. Di LattePanda selisihnya beberapa
+  # milidetik per frame, dan itu langsung terasa sebagai latensi video --
+  # setel false kalau fps di HUD terlihat lebih rendah daripada fps kamera.
+  smooth_scale: true
+
+  # Laju gambar-ulang layar saat TIDAK ada frame video baru. Frame video baru
+  # selalu digambar seketika, jadi menurunkan angka ini TIDAK menambah
+  # latensi video -- ia hanya mengurangi HUD digambar ulang percuma, dan
+  # mengembalikan waktu CPU itu ke loop kendali 50 Hz.
+  hud_rate_hz: 30
 
 sfx:
   enabled: true            # matikan semua suara tanpa uninstall/hapus file

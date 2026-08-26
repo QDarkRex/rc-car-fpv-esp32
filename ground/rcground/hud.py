@@ -44,8 +44,17 @@ class HudContext:
     wheel_connected: bool = False
     wheel_name: str = ""
     input_source: str = "none"
+    # rtt_ms = bolak-balik ke MOBIL (UDP 4210, lewat gema seq_echo).
+    # cam_rtt_ms = bolak-balik ke KAMERA (TCP ke port HTTP-nya).
+    # Keduanya modul terpisah di jaringan yang sama, jadi angkanya bisa
+    # berbeda -- terutama saat kamera sibuk mengirim frame.
     rtt_ms: float | None = None
+    cam_rtt_ms: float | None = None
     video_fps: float = 0.0
+    # Jeda terpanjang antar frame -- angka yang mewakili rasa "patah-patah".
+    # Dipisah dari video_fps karena fps yang rata-rata tidak bisa
+    # menunjukkannya. Lihat MjpegStream.worst_gap_ms.
+    video_gap_ms: float = 0.0
     telemetry_hz: float = 0.0
     rssi: int | None = None
     vbat: float | None = None
@@ -59,6 +68,11 @@ class HudContext:
     sfx_gas: str = ""
     sfx_horn: str = ""
     sfx_arm: str = ""
+    # Kalibrasi stir belum ada. Ditampilkan TERUS (bukan lewat `message` yang
+    # hilang setelah beberapa detik) karena selama ini benar, stir dan pedal
+    # tidak terbaca sama sekali -- itu kondisi yang harus selalu terlihat,
+    # bukan pemberitahuan sekali lewat yang mudah terlewat.
+    calibration_missing: bool = False
 
 
 class Hud:
@@ -126,9 +140,33 @@ class Hud:
         width, height = surface.get_size()
 
         self._draw_status_banner(surface, ctx, width)
+        if ctx.calibration_missing:
+            self._draw_calibration_warning(surface, width)
         self._draw_bars(surface, ctx, width, height)
         self._draw_telemetry(surface, ctx, width)
         self._draw_footer(surface, ctx, width, height)
+
+    def _draw_calibration_warning(self, surface, width: int) -> None:
+        """Pita peringatan tepat di bawah banner status.
+
+        Sengaja tidak berkedip: ini kondisi menetap, bukan kejadian mendadak.
+        Yang berkedip adalah FAILSAFE, dan dua hal berkedip sekaligus justru
+        membuat keduanya lebih mudah diabaikan.
+        """
+        rect = pygame.Rect(0, 46, width, 26)
+        self._panel(surface, rect, alpha=205)
+        text = self._pick_fitting(
+            [
+                "KALIBRASI BELUM ADA - jalankan Kalibrasi.exe. Stir dan pedal tidak terbaca.",
+                "KALIBRASI BELUM ADA - jalankan Kalibrasi.exe dulu",
+                "KALIBRASI BELUM ADA",
+            ],
+            self.font_small,
+            width - 24,
+        )
+        if text:
+            image = self.font_small.render(text, True, AMBER)
+            surface.blit(image, image.get_rect(center=(width // 2, rect.centery)))
 
     @staticmethod
     def _pick_fitting(variants, font, max_width: int):
@@ -215,8 +253,10 @@ class Hud:
             return
 
         # Tinggi panel diperbesar dari 132 supaya muat 3 baris tambahan info
-        # pack SFX aktif (gas/klakson/arm) di bawah baris telemetri lama.
-        rect = pygame.Rect(width - 172, 56, 160, 204)
+        # pack SFX aktif (gas/klakson/arm) di bawah baris telemetri lama,
+        # lalu +21 lagi untuk baris KENDALI setelah PING dipakai kamera,
+        # dan +21 sekali lagi untuk baris PATAH.
+        rect = pygame.Rect(width - 172, 56, 160, 246)
         self._panel(surface, rect)
 
         x_label = rect.left + 10
@@ -229,14 +269,42 @@ class Hud:
             self._text(surface, value, (x_value, y - 1), self.font_small, color, right=True)
             y += 21
 
-        if ctx.rtt_ms is None:
+        # PING = kamera. Ambangnya lebih longgar daripada jalur kendali:
+        # ini TCP ke server HTTP yang sedang sibuk mengirim frame, jadi
+        # puluhan milidetik masih wajar dan bukan tanda masalah.
+        if ctx.cam_rtt_ms is None:
             row("PING", "--", DIM)
         else:
+            color = (
+                GREEN if ctx.cam_rtt_ms < 60
+                else AMBER if ctx.cam_rtt_ms < 150
+                else RED
+            )
+            row("PING", f"{ctx.cam_rtt_ms:.0f} ms", color)
+
+        # Jalur kendali tetap ditampilkan -- inilah angka yang menentukan
+        # apakah mobil masih menurut, dan ambangnya jauh lebih ketat.
+        if ctx.rtt_ms is None:
+            row("KENDALI", "--", DIM)
+        else:
             color = GREEN if ctx.rtt_ms < 30 else AMBER if ctx.rtt_ms < 80 else RED
-            row("PING", f"{ctx.rtt_ms:.0f} ms", color)
+            row("KENDALI", f"{ctx.rtt_ms:.0f} ms", color)
 
         fps_color = GREEN if ctx.video_fps >= 15 else AMBER if ctx.video_fps > 0 else RED
         row("VIDEO", f"{ctx.video_fps:.0f} fps", fps_color)
+
+        # PATAH: jeda frame terpanjang. Ambangnya dipilih dari yang terlihat
+        # mata, bukan angka bulat -- di bawah ~120 ms gerakan masih terbaca
+        # menerus; di atas ~250 ms terasa jelas sebagai tersendat.
+        if ctx.video_gap_ms <= 0.0:
+            row("PATAH", "--", DIM)
+        else:
+            color = (
+                GREEN if ctx.video_gap_ms < 120
+                else AMBER if ctx.video_gap_ms < 250
+                else RED
+            )
+            row("PATAH", f"{ctx.video_gap_ms:.0f} ms", color)
 
         tel_color = GREEN if ctx.telemetry_hz >= 7 else AMBER if ctx.telemetry_hz > 0 else RED
         row("TELEM", f"{ctx.telemetry_hz:.0f} Hz", tel_color)

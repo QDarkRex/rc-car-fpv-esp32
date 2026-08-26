@@ -1,5 +1,61 @@
 /*
- * rc_cam_esp32 — kamera FPV untuk RC Car.
+ * rc_cam_esp32_ap — kamera FPV untuk RC Car, VARIAN ACCESS POINT.
+ *
+ * ====================================================================
+ * INI SALINAN TERPISAH DARI firmware/rc_cam_esp32/.
+ * Yang asli TIDAK diubah dan tetap bisa dipakai kapan saja.
+ * Bedanya HANYA topologi jaringan; semua setelan gambar (resolusi,
+ * kualitas, orientasi, fb_count) sengaja dibiarkan SAMA PERSIS supaya
+ * perbandingan antara keduanya mengukur topologinya saja.
+ * ====================================================================
+ *
+ * MASALAH YANG DIPECAHKAN: video patah-patah.
+ *
+ * Pada varian asli, kamera menjadi klien router GL.iNet, dan LattePanda
+ * juga klien router yang sama. Artinya setiap paket video menyeberang
+ * udara DUA KALI di kanal yang sama:
+ *
+ *     kamera --udara--> GL.iNet --udara--> LattePanda
+ *
+ * Router harus menerima frame lalu memancarkannya ulang. Airtime terpakai
+ * dua kali lipat, dan ada dua kesempatan paket hilang. Paket kendali 50 Hz
+ * ikut berebut kanal yang sama. Di TCP, satu paket hilang menahan seluruh
+ * aliran sampai kiriman ulangnya sampai -- itulah pembekuan yang terasa
+ * sebagai patah-patah.
+ *
+ * Varian ini membuat kamera menjadi ACCESS POINT sendiri, dan LattePanda
+ * menyambung langsung kepadanya:
+ *
+ *     kamera(AP) --udara--> LattePanda          <- SATU hop, kanal sendiri
+ *     mobil --udara--> GL.iNet --KABEL LAN--> LattePanda
+ *
+ * Hasilnya: airtime video separuh, peluang kehilangan paket separuh, dan
+ * video tidak lagi berebut kanal dengan kendali sama sekali.
+ *
+ * KONSEKUENSI YANG HARUS DIUKUR SENDIRI: antena XIAO ESP32S3 jauh lebih
+ * kecil daripada antena GL.iNet. Sebagai AP, JANGKAUANNYA kemungkinan
+ * lebih pendek. Itu satu-satunya hal yang bisa membuat varian ini lebih
+ * buruk, dan hanya lapangan yang bisa membuktikannya. Uji jangkauan
+ * sebelum memakainya untuk balapan.
+ *
+ * CARA MEMAKAI DI SISI DARAT:
+ *   1. Sambungkan LattePanda ke WiFi kamera (SSID di CAM_AP_SSID bawah).
+ *   2. Sambungkan LattePanda ke GL.iNet lewat KABEL LAN (untuk kendali).
+ *   3. Di ground/config.yaml, buka komentar baris stream_url dan isi:
+ *        stream_url: http://192.168.4.1/stream
+ *      Biarkan network.car_ip tetap diturunkan dari unit: seperti biasa --
+ *      mobil tetap lewat GL.iNet, tidak berubah sama sekali.
+ *
+ *   Subnet kamera (192.168.4.x) sengaja BERBEDA dari GL.iNet (192.168.8.x)
+ *   supaya Windows bisa merutekan keduanya sekaligus lewat on-link route:
+ *   192.168.8.51 keluar lewat LAN, 192.168.4.1 lewat WiFi.
+ *
+ * BALAPAN 3 MOBIL: tiap kamera memakai kanal berbeda yang diturunkan dari
+ * UNIT_ID (1 -> kanal 1, 2 -> kanal 6, 3 -> kanal 11), yaitu ketiga kanal
+ * non-overlap di 2,4 GHz. Setiap pasang kamera/LattePanda karena itu punya
+ * kanal sendiri, sementara kendali ketiga mobil tetap lewat satu GL.iNet
+ * (trafiknya kecil, ~5 kbps per mobil). Ini justru lebih longgar daripada
+ * varian asli, di mana semuanya berdesakan di satu kanal.
  *
  * Sengaja BUKAN contoh CameraWebServer bawaan. UI kontrol di contoh itu
  * memakan RAM dan menambah latensi tanpa manfaat di sini; yang kita butuhkan
@@ -20,9 +76,10 @@
  *     Partition Scheme  : "Huge APP (3MB No OTA/1MB SPIFFS)"
  *     PSRAM             : "Enabled"
  *
- * Endpoint:
- *   http://192.168.137.60/         halaman pratinjau sederhana
- *   http://192.168.137.60/stream   stream MJPEG yang dipakai ground station
+ * Endpoint (alamat AP, sama untuk semua unit karena tiap kamera adalah
+ * jaringan tersendiri -- tidak mungkin bentrok):
+ *   http://192.168.4.1/         halaman pratinjau sederhana
+ *   http://192.168.4.1/stream   stream MJPEG yang dipakai ground station
  *
  * CARA FLASH:
  *
@@ -63,27 +120,53 @@
 // =================================================================
 // UNIT_ID -- SATU-SATUNYA BARIS YANG PERLU DIUBAH SAAT FLASH KAMERA
 // KE-2 DAN KE-3. Isi 1, 2, atau 3, HARUS SAMA dengan UNIT_ID di
-// firmware/rc_car_esp32/config.h milik mobil yang sama. IP kamera
-// diturunkan otomatis dari angka ini -- lihat CAM_IP_4 di bawah.
+// firmware/rc_car_esp32/config.h milik mobil yang sama.
+//
+// Di varian AP ini, yang diturunkan dari UNIT_ID adalah NAMA SSID
+// ("RCCam-1/2/3") dan KANAL (1/6/11) -- bukan alamat IP, karena tiap
+// kamera adalah jaringan tersendiri dan semuanya memakai 192.168.4.1.
+// Lihat blok jaringan (AP) di bawah.
 // =================================================================
 #define UNIT_ID 3
 
-#define WIFI_SSID "RCCar"
-#define WIFI_PASS "admin.admin"
+// ---------------------------------------------------------- jaringan (AP)
+//
+// Kamera ini MEMBUAT jaringan sendiri; ia tidak menyambung ke GL.iNet.
+// SSID dibedakan per unit supaya tiga kamera bisa hidup bersamaan tanpa
+// pembalap tertukar menyambung ke kamera mobil sebelah.
+#define CAM_AP_SSID_BASE "RCCam-"
+#define CAM_AP_PASS "admin.admin"      // minimal 8 karakter; "" = terbuka
 
-// IP statis, DITURUNKAN dari UNIT_ID: unit 1 = .60, unit 2 = .61, unit 3 = .62.
-// Router GL.iNet memakai subnet 192.168.8.x dengan gateway .1 dan DHCP
-// otomatis di rentang .100-.249 -- rentang .60-.62 dipilih supaya tidak
-// pernah bentrok dengan DHCP maupun dengan mobil (.50-.52, lihat
-// firmware/rc_car_esp32/config.h).
-// Harus sama dengan camera.stream_url di ground/config.yaml (atau biarkan
-// ground/config.yaml menurunkannya sendiri lewat kunci `unit:`).
-#define CAM_IP_1 192
-#define CAM_IP_2 168
-#define CAM_IP_3 8
-#define CAM_IP_4 (59 + UNIT_ID)
-#define GATEWAY_IP_4 1
-#define USE_DHCP 0
+// KANAL, diturunkan dari UNIT_ID: 1 -> 1, 2 -> 6, 3 -> 11.
+//
+// Ketiganya adalah satu-satunya kanal yang benar-benar TIDAK saling
+// tumpang tindih di 2,4 GHz. Inilah inti keuntungan varian AP untuk
+// balapan: tiap pasang kamera/LattePanda mendapat kanalnya sendiri,
+// alih-alih berdesakan di satu kanal milik router.
+//
+// Setel GL.iNet ke kanal yang TIDAK dipakai kamera mana pun kalau bisa;
+// kalau terpaksa berbagi, pilih kanal kamera unit yang paling jauh dari
+// pembalap -- trafik kendali sangat kecil (~5 kbps per mobil) sehingga
+// paling tahan terhadap gangguan.
+#define CAM_AP_CHANNEL ((UNIT_ID) == 1 ? 1 : ((UNIT_ID) == 2 ? 6 : 11))
+
+// Alamat AP. SAMA untuk semua unit -- tidak bentrok karena tiap kamera
+// adalah jaringan terpisah yang hanya dilihat oleh satu LattePanda.
+// Subnet 192.168.4.x sengaja BERBEDA dari GL.iNet (192.168.8.x) supaya
+// LattePanda bisa memakai keduanya sekaligus: mobil lewat kabel LAN,
+// kamera lewat WiFi, dan Windows merutekan otomatis lewat on-link route.
+#define CAM_AP_IP_1 192
+#define CAM_AP_IP_2 168
+#define CAM_AP_IP_3 4
+#define CAM_AP_IP_4 1
+
+// Hanya LattePanda yang boleh menyambung. Membatasi ke 1 membuat kamera
+// menolak klien nyasar yang akan ikut memakan airtime.
+#define CAM_AP_MAX_CLIENTS 1
+
+// 0 = SSID disiarkan seperti biasa. Set 1 untuk menyembunyikannya kalau
+// lokasi balapan ramai dan Anda tidak ingin orang lain mencoba menyambung.
+#define CAM_AP_HIDDEN 0
 
 // =================================================================
 // RESOLUSI KAMERA -- ganti SATU baris ini kalau 3 stream bersamaan
@@ -392,39 +475,41 @@ static bool startCamera() {
 
 // ----------------------------------------------------------------- setup
 
-static void connectWifi() {
-  WiFi.mode(WIFI_STA);
+static void startAccessPoint() {
+  WiFi.mode(WIFI_AP);
 
-  // Sama seperti di firmware mobil: power save WiFi harus mati, kalau tidak
-  // stream tersendat secara acak.
+  // Sama seperti varian asli: power save WiFi harus mati, kalau tidak
+  // stream tersendat secara acak. Pada mode AP ini bahkan lebih penting --
+  // AP yang tidur akan menunda paket ke satu-satunya klien yang ada.
   WiFi.setSleep(false);
 
-#if !USE_DHCP
-  IPAddress local(CAM_IP_1, CAM_IP_2, CAM_IP_3, CAM_IP_4);
-  IPAddress gateway(CAM_IP_1, CAM_IP_2, CAM_IP_3, GATEWAY_IP_4);
+  // Alamat AP diterapkan SEBELUM softAP() dijalankan. Kalau dibalik,
+  // server DHCP internal sempat menyala dengan subnet bawaan lebih dulu
+  // dan klien bisa terlanjur mendapat alamat dari subnet yang salah.
+  IPAddress local(CAM_AP_IP_1, CAM_AP_IP_2, CAM_AP_IP_3, CAM_AP_IP_4);
   IPAddress subnet(255, 255, 255, 0);
-  if (!WiFi.config(local, gateway, subnet, gateway)) {
-    Serial.println("[CAM] gagal menerapkan IP statis, memakai DHCP");
+  if (!WiFi.softAPConfig(local, local, subnet)) {
+    Serial.println("[CAM] gagal menerapkan alamat AP, memakai bawaan");
   }
-#endif
 
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  Serial.printf("[CAM] menyambung ke \"%s\"", WIFI_SSID);
+  char ssid[32];
+  snprintf(ssid, sizeof(ssid), "%s%d", CAM_AP_SSID_BASE, UNIT_ID);
 
-  uint32_t start = millis();
-  while (WiFi.status() != WL_CONNECTED && (millis() - start) < 20000) {
-    delay(400);
-    Serial.print(".");
+  const bool ok = WiFi.softAP(
+      ssid, CAM_AP_PASS, CAM_AP_CHANNEL, CAM_AP_HIDDEN, CAM_AP_MAX_CLIENTS);
+
+  if (!ok) {
+    Serial.println("[CAM] GAGAL menyalakan access point");
+    return;
   }
-  Serial.println();
 
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("[CAM] tersambung. Stream di  http://");
-    Serial.print(WiFi.localIP());
-    Serial.println("/stream");
-  } else {
-    Serial.println("[CAM] gagal menyambung - akan terus mencoba di loop()");
-  }
+  Serial.printf("[CAM] access point \"%s\" aktif di kanal %d\n",
+                ssid, CAM_AP_CHANNEL);
+  Serial.print("[CAM] stream di  http://");
+  Serial.print(WiFi.softAPIP());
+  Serial.println("/stream");
+  Serial.println("[CAM] sambungkan LattePanda ke SSID di atas,");
+  Serial.println("[CAM] dan ke GL.iNet lewat kabel LAN untuk kendali.");
 }
 
 void setup() {
@@ -459,7 +544,7 @@ void setup() {
   }
   Serial.println("[CAM] kamera siap");
 
-  connectWifi();
+  startAccessPoint();
   startServer();
 }
 
@@ -467,24 +552,23 @@ void loop() {
   static uint32_t lastReport = 0;
   static uint32_t lastFrames = 0;
 
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[CAM] WiFi terputus, menyambung ulang...");
-    WiFi.reconnect();
-    // Jeda 8 detik, BUKAN sekadar jeda loop biasa. Satu kali autentikasi
-    // WiFi butuh 1-3 detik untuk selesai atau gagal; memanggil reconnect()
-    // lagi sebelum itu selesai membuat driver ESP32 membanjiri Serial
-    // dengan "wifi:sta is connecting, return error" / "cannot set config".
-    delay(8000);
-    return;
-  }
+  // TIDAK ADA logika sambung-ulang di sini, berbeda dari varian asli.
+  // Sebagai AP, kamera tidak pernah "terputus" -- ia yang menyediakan
+  // jaringan. Yang datang dan pergi adalah KLIEN, dan itu ditangani
+  // sendiri oleh tumpukan WiFi tanpa perlu campur tangan.
 
   const uint32_t now = millis();
   if (now - lastReport >= 5000) {
     const uint32_t frames = frameCounter - lastFrames;
     lastFrames = frameCounter;
     lastReport = now;
-    Serial.printf("[CAM] %.1f fps | rssi %d dBm | heap bebas %u\n",
-                  frames / 5.0f, WiFi.RSSI(), (unsigned)ESP.getFreeHeap());
+    // RSSI tidak ada artinya di sisi AP (tidak ada satu pun "sinyal yang
+    // diterima" milik kita sendiri), jadi diganti jumlah klien yang
+    // tersambung -- angka yang benar-benar berguna: 0 berarti LattePanda
+    // belum menyambung ke SSID kamera ini.
+    Serial.printf("[CAM] %.1f fps | klien %d | heap bebas %u\n",
+                  frames / 5.0f, WiFi.softAPgetStationNum(),
+                  (unsigned)ESP.getFreeHeap());
   }
   delay(100);
 }

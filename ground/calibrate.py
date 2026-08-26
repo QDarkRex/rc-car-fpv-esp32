@@ -11,6 +11,12 @@ itulah yang dipakai. Hasilnya ditulis ke calibration.yaml.
 Jalankan:
     python calibrate.py
     python calibrate.py --servo   # kalibrasi output servo tanpa arm mobil
+
+Mode --servo, kalau stir PXN V9 sudah pernah dikalibrasi (calibration.yaml
+ada) dan masih tersambung, menawarkan tombol W untuk mode "stir langsung":
+servo mobil bergerak real-time mengikuti putaran stir sungguhan memakai
+titik kiri/tengah/kanan yang sedang diatur, jadi kalibrasi bisa disinkronkan
+sambil benar-benar memegang stir, bukan menebak lewat tombol panah saja.
 """
 
 from __future__ import annotations
@@ -27,7 +33,7 @@ import pygame
 
 from rcground import config as cfg
 from rcground.link import Link
-from rcground.wheel import validate_servo_points
+from rcground.wheel import Wheel, map_servo_output, validate_servo_points
 
 WIDTH, HEIGHT = 900, 660
 BG = (16, 18, 22)
@@ -123,16 +129,27 @@ def _servo_defaults(config: dict) -> list[float]:
     return values
 
 
-def run_servo_wizard(screen, font_big, font, font_small, link, config) -> tuple | None:
-    """Tune left/center/right outputs while sending disarmed packets only."""
+def run_servo_wizard(screen, font_big, font, font_small, link, config, wheel=None) -> tuple | None:
+    """Tune left/center/right outputs while sending disarmed packets only.
+
+    When `wheel` is given (a Wheel already opened on the calibrated PXN V9),
+    the operator can toggle "mode stir" with W: instead of the static
+    preview jumping to the selected point's value, every frame maps the
+    REAL wheel position through the candidate left/center/right and sends
+    that. This lets left/center/right be tuned while actually turning the
+    wheel and watching the real servo, instead of trusting numbers blind.
+    """
     values = _servo_defaults(config)
     labels = ("LEFT", "CENTER", "RIGHT")
     selected = 1
     error = ""
     clock = pygame.time.Clock()
     done = False
+    live = False
+    wheel_available = wheel is not None and wheel.connected
     try:
         while not done:
+            dt = clock.get_time() / 1000.0
             for event in pygame.event.get():
                 if event.type == pygame.QUIT or (
                     event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE
@@ -150,6 +167,8 @@ def run_servo_wizard(screen, font_big, font, font_small, link, config) -> tuple 
                     values[selected] = max(-1.0, values[selected] - SERVO_STEP)
                 elif event.key in (pygame.K_RIGHT, pygame.K_UP):
                     values[selected] = min(1.0, values[selected] + SERVO_STEP)
+                elif event.key == pygame.K_w and wheel_available:
+                    live = not live
                 elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                     try:
                         validate_servo_points(*values)
@@ -161,7 +180,20 @@ def run_servo_wizard(screen, font_big, font, font_small, link, config) -> tuple 
 
             # This is deliberately the only control call in this wizard:
             # steering candidate, throttle 0, brake 0, armed False.
-            servo_preview_packet(link, values[selected])
+            if live and wheel_available:
+                # wheel.read() applies deadzone/expo/trim/max_angle using the
+                # wheel's own tuning, but its internal servo_left/center/right
+                # were forced to -1/0/1 (identity) by the caller -- so
+                # wheel_state.steer here is the pre-servo-mapping value, and
+                # mapping it through the CANDIDATE points is exactly what
+                # driving would do once these values are saved.
+                wheel_state = wheel.read(dt)
+                live_steer = wheel_state.steer
+                preview = map_servo_output(live_steer, *values)
+            else:
+                live_steer = None
+                preview = values[selected]
+            servo_preview_packet(link, preview)
             screen.fill(BG)
             screen.blit(font_big.render("Kalibrasi servo kiri/tengah/kanan", True, WHITE), (40, 36))
             screen.blit(
@@ -171,19 +203,33 @@ def run_servo_wizard(screen, font_big, font, font_small, link, config) -> tuple 
                     True, GREEN if link.connected else AMBER,
                 ), (40, 86)
             )
+            mode_text = "STIR LANGSUNG (putar stir untuk uji)" if live else "MANUAL (panah kanan/kiri)"
+            mode_color = BLUE if live else DIM
+            wheel_hint = (
+                "W = matikan mode stir" if live else
+                "W = uji pakai stir asli" if wheel_available else
+                "stir tidak terdeteksi/terkalibrasi -- mode manual saja"
+            )
             screen.blit(font_small.render(
-                "L/C/R pilih titik | panah ubah output | ENTER simpan | ESC batal",
+                f"L/C/R pilih titik | panah ubah output | ENTER simpan | ESC batal | {wheel_hint}",
                 True, DIM,
             ), (40, 122))
+            screen.blit(font_small.render(f"Mode: {mode_text}", True, mode_color), (40, 146))
             y = 190
             for index, (label, value) in enumerate(zip(labels, values)):
                 color = BLUE if index == selected else WHITE
                 screen.blit(font.render(f"{label:6s} {value:+.3f}", True, color), (80, y))
                 y += 42
-            screen.blit(font_small.render(
-                f"Sedang mengirim {labels[selected]} = {values[selected]:+.3f}; "
-                "roda tetap DISARMED dan gas/rem netral.", True, AMBER,
-            ), (40, 350))
+            if live and live_steer is not None:
+                screen.blit(font_small.render(
+                    f"Stir mentah = {live_steer:+.3f}  ->  output servo = {preview:+.3f}; "
+                    "atur L/C/R sambil menahan stir di posisi ujung.", True, AMBER,
+                ), (40, 350))
+            else:
+                screen.blit(font_small.render(
+                    f"Sedang mengirim {labels[selected]} = {values[selected]:+.3f}; "
+                    "roda tetap DISARMED dan gas/rem netral.", True, AMBER,
+                ), (40, 350))
             if error:
                 screen.blit(font_small.render(error, True, RED), (40, HEIGHT - 70))
             pygame.display.flip()
@@ -557,7 +603,30 @@ def main() -> int:
                 config["network"]["car_ip"] = args.car
                 config["network"]["broadcast"] = args.car
             link = Link(config)
-            result = run_servo_wizard(screen, font_big, font, font_small, link, config)
+
+            # Buka stir asli (kalau tersambung dan sudah pernah dikalibrasi
+            # lewat calibrate.py biasa) supaya wizard bisa menawarkan mode
+            # "stir langsung" -- lihat run_servo_wizard(). servo_left/center/
+            # right dipaksa -1/0/1 (identity) di sini karena NILAI ITU
+            # sendiri yang sedang dikalibrasi; me-remapping dua kali akan
+            # membuat pratinjau salah.
+            wheel = None
+            calibration = cfg.load_calibration()
+            if calibration.get("axes", {}).get("steer", {}).get("axis") is not None:
+                pygame.joystick.init()
+                if pygame.joystick.get_count() > 0:
+                    wheel_tuning = {
+                        "steering": {
+                            **config.get("steering", {}),
+                            "servo_left": -1.0,
+                            "servo_center": 0.0,
+                            "servo_right": 1.0,
+                        }
+                    }
+                    candidate = Wheel(calibration, wheel_tuning)
+                    wheel = candidate if candidate.connected else None
+
+            result = run_servo_wizard(screen, font_big, font, font_small, link, config, wheel)
             if result is None:
                 print("Dibatalkan, servo calibration tidak diubah.")
                 return 1

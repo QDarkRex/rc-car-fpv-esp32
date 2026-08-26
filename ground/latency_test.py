@@ -73,7 +73,12 @@ class LatencyTester:
         self.font_mid = load_font(28, bold=True)
 
         self.url = url
-        self.video = MjpegStream(url, timeout=3.0).start()
+        # decode=True supaya alat ini mengukur jalur yang SAMA PERSIS dengan
+        # main.py. Kalau di sini dekode dikerjakan di loop gambar sementara
+        # aplikasi asli mengerjakannya di thread video, angka yang keluar
+        # bukan latensi yang benar-benar dirasakan saat mengemudi -- ia
+        # memuat perlambatan yang hanya ada di alat ukurnya sendiri.
+        self.video = MjpegStream(url, timeout=3.0, decode=True).start()
 
         self.start = time.monotonic()
         self.frozen = False
@@ -92,13 +97,22 @@ class LatencyTester:
 
     # -- video -----------------------------------------------------------
     def _decode_latest(self) -> None:
-        jpeg, frame_id = self.video.latest()
-        if jpeg is None or frame_id == self._frame_id:
+        # Sejajar dengan main.py: dekode sudah dikerjakan thread video, di
+        # sini tinggal convert(). Jalur cadangan tetap ada untuk frame yang
+        # gagal didekode di sana.
+        surface, frame_id = self.video.latest_surface()
+        if frame_id == self._frame_id:
             return
-        try:
-            self._surface = pygame.image.load(io.BytesIO(jpeg), "f.jpg").convert()
-        except pygame.error:
-            return
+        if surface is None:
+            jpeg, frame_id = self.video.latest()
+            if jpeg is None or frame_id == self._frame_id:
+                return
+            try:
+                surface = pygame.image.load(io.BytesIO(jpeg), "f.jpg")
+            except pygame.error:
+                self._frame_id = frame_id
+                return
+        self._surface = surface.convert()
         self._frame_id = frame_id
 
     # -- pembekuan -------------------------------------------------------

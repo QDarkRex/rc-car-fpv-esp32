@@ -265,28 +265,43 @@ class Wheel:
             idx = int(idx)
             return js.get_button(idx) if 0 <= idx < js.get_numbuttons() else False
 
-        # --- stir
+        # Tanpa kalibrasi, JANGAN menebak nomor axis. Menebak nomor axis
+        # sekaligus menebak posisi diamnya adalah kombinasi yang berbahaya:
+        # default lama menganggap pedal lepas ada di -1.0, padahal axis yang
+        # ditebak itu sering diam di 0.0. Hasilnya gas HANTU 50% tanpa pedal
+        # disentuh sama sekali -- yang muncul ke pengguna sebagai "Tidak bisa
+        # arm: lepaskan pedal dulu" padahal kakinya memang tidak di pedal.
+        #
+        # Nol adalah satu-satunya default yang jujur di sini: kalau kita tidak
+        # tahu axis mana pedalnya, kita juga tidak tahu apakah sedang diinjak.
+        # calibrate.py yang memberi tahu, bukan tebakan.
         steer_cal = axes.get("steer", {})
-        raw_steer = _normalize_bipolar(
-            axis(int(steer_cal.get("axis", 0))),
-            float(steer_cal.get("min", -1.0)),
-            float(steer_cal.get("center", 0.0)),
-            float(steer_cal.get("max", 1.0)),
-        )
-
-        # --- pedal
         gas_cal = axes.get("gas", {})
         brake_cal = axes.get("brake", {})
-        gas = _normalize_unipolar(
-            axis(int(gas_cal.get("axis", 1))),
-            float(gas_cal.get("released", -1.0)),
-            float(gas_cal.get("pressed", 1.0)),
-        )
-        brake = _normalize_unipolar(
-            axis(int(brake_cal.get("axis", 2))),
-            float(brake_cal.get("released", -1.0)),
-            float(brake_cal.get("pressed", 1.0)),
-        )
+
+        def unipolar(cal: dict) -> float:
+            if cal.get("axis") is None:
+                return 0.0
+            return _normalize_unipolar(
+                axis(int(cal["axis"])),
+                float(cal.get("released", -1.0)),
+                float(cal.get("pressed", 1.0)),
+            )
+
+        # --- stir
+        if steer_cal.get("axis") is None:
+            raw_steer = 0.0
+        else:
+            raw_steer = _normalize_bipolar(
+                axis(int(steer_cal["axis"])),
+                float(steer_cal.get("min", -1.0)),
+                float(steer_cal.get("center", 0.0)),
+                float(steer_cal.get("max", 1.0)),
+            )
+
+        # --- pedal
+        gas = unipolar(gas_cal)
+        brake = unipolar(brake_cal)
 
         arm_now = button(buttons_cfg.get("arm"))
         state.arm_edge = arm_now and not self._prev_arm

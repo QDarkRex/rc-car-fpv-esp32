@@ -60,9 +60,12 @@ RC Car/
 │   ├── protocol.md          Spesifikasi paket UDP (kontrak antar sisi)
 │   └── balapan-3-unit.md    Setup 3 mobil/3 LattePanda, alamat, checklist
 ├── firmware/
-│   ├── rc_car_esp32/  Otak mobil (ESP32 Dev Module)
-│   └── rc_cam_esp32/  Kamera FPV (XIAO ESP32S3 Sense, AI-Thinker ESP32-CAM
-│                       cadangan)
+│   ├── rc_car_esp32/     Otak mobil (ESP32 Dev Module)
+│   ├── rc_cam_esp32/     Kamera FPV (XIAO ESP32S3 Sense, AI-Thinker
+│   │                     ESP32-CAM cadangan) — kamera jadi KLIEN router
+│   └── rc_cam_esp32_ap/  Varian kamera sebagai ACCESS POINT sendiri.
+│                         Untuk mengatasi video patah-patah — lihat
+│                         "Kalau video terasa telat" di bawah.
 └── ground/
     ├── main.py        Aplikasi ground station
     ├── calibrate.py   Wizard kalibrasi stir
@@ -154,6 +157,18 @@ dan rem nol, sehingga servo dapat bergerak tanpa mengaktifkan motor. Pilih `L`,
 ENTER untuk menyimpan. `ESC`, error, atau penutupan jendela selalu mengirim
 beberapa paket center/netral. Nilai disimpan di blok `steering:` pada
 `config.yaml`; default `-1.0 / 0.0 / 1.0` mempertahankan perilaku lama.
+
+**Mode stir langsung (W).** Kalau stir PXN V9 sudah dikalibrasi lewat
+`python calibrate.py` (biasa, tanpa `--servo`) dan masih tersambung, tekan
+`W` untuk beralih ke mode ini: servo mobil bergerak *real-time* mengikuti
+putaran stir sungguhan, memakai titik `L/C/R` yang sedang Anda atur. Putar
+stir mentok kiri sambil menahan, lalu atur nilai `LEFT` dengan panah sampai
+roda mobil benar-benar mentok kiri secara fisik — begitu juga untuk tengah
+dan kanan. Ini menyinkronkan program, stir, dan servo mobil dalam satu
+langkah, alih-alih menebak angka lewat tombol panah tanpa umpan balik. Tekan
+`W` lagi untuk kembali ke mode manual. Kalau stir belum terdeteksi atau
+belum pernah dikalibrasi, mode ini otomatis tidak ditawarkan dan wizard
+tetap berjalan manual seperti biasa.
 
 Uji tanpa mobil fisik dengan dua terminal dari folder `ground/`:
 
@@ -367,6 +382,95 @@ Semuanya di `ground/config.yaml`, tidak perlu flash ulang.
 
 Untuk trim: sambil mengemudi, tekan `[` atau `]` sampai mobil berjalan lurus,
 lalu tekan `F5` untuk menyimpannya.
+
+---
+
+## Kalau video terasa telat
+
+Jalur video sudah dirancang agar tidak pernah menumpuk frame lama: kamera
+membuang frame yang belum sempat terkirim (`CAMERA_GRAB_LATEST`), sisi darat
+hanya menyimpan satu frame terbaru, dan dekode JPEG dikerjakan di thread
+video — bukan di loop kendali 50 Hz, supaya frame yang berat tidak pernah
+menunda paket kendali.
+
+Kalau masih terasa telat, urutan yang paling berpengaruh:
+
+| Langkah | Di mana | Efek |
+|---|---|---|
+| Turunkan ke `FRAMESIZE_QVGA` | `firmware/rc_cam_esp32` → `CAM_FRAMESIZE` | Paling besar. ~1,5 Mbps/kamera, bukan ~4 Mbps |
+| Naikkan `CAM_JPEG_QUALITY` (angka lebih besar = file lebih kecil) | firmware kamera | Frame lebih ringan, lebih tahan sinyal lemah |
+| `display.smooth_scale: false` | `ground/config.yaml` | Hemat beberapa ms/frame di CPU lemah |
+| Turunkan `display.hud_rate_hz` | `ground/config.yaml` | Mengembalikan CPU ke loop kendali; **tidak** menambah latensi video |
+| Dekatkan antena / kurangi jumlah kamera aktif | lapangan | Rebutan 2,4 GHz adalah penyebab paling sering |
+
+Bandingkan angka **VIDEO fps** di HUD dengan fps yang dicetak kamera di
+Serial Monitor. Kalau HUD jauh lebih rendah, hambatannya di sisi darat
+(CPU) — pakai dua baris `display:` di atas. Kalau keduanya sama-sama rendah,
+hambatannya di kamera atau jaringan — pakai dua baris firmware di atas.
+
+### Patah-patah ≠ latensi
+
+Keduanya masalah berbeda dengan sebab berbeda, dan **VIDEO fps tidak bisa
+membedakannya** karena ia rata-rata: beku 400 ms lalu menyusul beruntun
+tetap terbaca ~20 fps. Untuk itu ada baris **PATAH** di HUD — jeda
+terpanjang antar frame dalam 3 detik terakhir. Di bawah 120 ms gerakan
+masih terbaca menerus; di atas 250 ms terasa jelas tersendat.
+
+Penyebab paling lazim bukan kamera yang lambat, melainkan **kehilangan
+paket**: video mengalir lewat TCP, dan satu segmen hilang menahan seluruh
+aliran sampai kiriman ulangnya sampai. Video membeku, lalu frame menumpuk
+datang serentak. Kalau `ping` ke mobil atau kamera menunjukkan RTO
+sesekali, itu konfirmasinya.
+
+Tiga penangkalnya, dari yang paling murah:
+
+1. **Pindahkan kanal router** ke 1/6/11 yang paling lengang. Gratis, tanpa
+   flash apa pun, dan sering paling berpengaruh.
+2. **Perkecil frame** (`FRAMESIZE_QVGA`, naikkan `CAM_JPEG_QUALITY`).
+   Frame VGA pecah jadi belasan segmen TCP; QVGA hanya 3-5. Makin sedikit
+   segmen, makin kecil peluang satu di antaranya hilang.
+3. **Pakai `firmware/rc_cam_esp32_ap/`** — lihat di bawah.
+
+### Kamera sebagai Access Point
+
+Pada susunan baku, kamera dan LattePanda sama-sama klien router GL.iNet.
+Artinya setiap paket video menyeberang udara **dua kali** di kanal yang
+sama — router menerimanya lalu memancarkannya ulang:
+
+```
+kamera ──udara──> GL.iNet ──udara──> LattePanda
+```
+
+`firmware/rc_cam_esp32_ap/` membuat kamera menjadi access point sendiri,
+dan LattePanda menyambung langsung kepadanya. Kendali tetap lewat GL.iNet,
+tapi disambungkan ke LattePanda lewat **kabel LAN**:
+
+```
+kamera(AP) ──udara──> LattePanda              1 hop, kanal sendiri
+mobil ──udara──> GL.iNet ──kabel──> LattePanda
+```
+
+Airtime video jadi separuh, peluang kehilangan paket jadi separuh, dan
+video tidak lagi berebut kanal dengan kendali. Untuk balapan 3 mobil tiap
+kamera memakai kanal berbeda yang diturunkan dari `UNIT_ID` (1/6/11 —
+ketiga kanal non-overlap 2,4 GHz), jadi tiap pasang punya kanal sendiri.
+
+Cara memakainya:
+
+1. Flash `rc_cam_esp32_ap/` (setel `UNIT_ID` seperti biasa).
+2. Sambungkan LattePanda ke WiFi kamera — SSID `RCCam-<unit>`.
+3. Sambungkan LattePanda ke GL.iNet lewat **kabel LAN**.
+4. Di `ground/config.yaml`, buka komentar `stream_url` dan isi
+   `http://192.168.4.1/stream`. Biarkan `car_ip` tetap diturunkan dari
+   `unit:` — mobil tidak berubah sama sekali.
+
+**Yang harus Anda uji sendiri:** antena XIAO ESP32S3 jauh lebih kecil
+daripada antena GL.iNet, jadi sebagai AP **jangkauannya kemungkinan lebih
+pendek**. Itu satu-satunya hal yang bisa membuat varian ini lebih buruk.
+Uji jangkauan sebelum memakainya untuk balapan.
+
+Varian asli (`rc_cam_esp32/`) tidak diubah dan tetap bisa dipakai kapan
+saja — flash yang mana pun untuk membandingkan.
 
 ---
 

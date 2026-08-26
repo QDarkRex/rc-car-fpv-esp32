@@ -40,7 +40,7 @@ from rcground import config as cfg
 from rcground.hud import Hud, HudContext
 from rcground.link import Link
 from rcground.sfx import SfxEngine
-from rcground.video import MjpegStream
+from rcground.video import CameraPing, MjpegStream
 from rcground.wheel import KeyboardWheel, Wheel
 
 TRIM_STEP = 0.005
@@ -76,6 +76,23 @@ class GroundStation:
         self.rate = float(self.config["network"].get("control_rate_hz", 50))
         self.period = 1.0 / max(1.0, self.rate)
 
+        # Masa tenggang sebelum kedipan tautan dianggap putus SUNGGUHAN.
+        #
+        # Kenapa perlu: telemetri datang 10 Hz, jadi link_timeout_ms 500 sudah
+        # jatuh hanya karena 5 paket berturut hilang -- dan di 2,4 GHz yang
+        # padat, RTO sepersekian detik itu normal, bukan tanda kerusakan.
+        # Tanpa tenggang ini, satu kedipan sesaat mengubah TIGA hal sekaligus:
+        # banner berubah FAILSAFE, HUD menampilkan DISARMED walau mobil masih
+        # armed, dan suara mesin dimatikan lalu dinyalakan lagi dari awal --
+        # sehingga suara starter terdengar berulang-ulang saat mengemudi.
+        #
+        # Nilai mentah link.connected TETAP dipakai apa adanya untuk syarat
+        # arming; yang diperhalus di sini hanya tampilan dan suara.
+        self.link_grace = float(
+            self.config["network"].get("link_grace_ms", 2500)
+        ) / 1000.0
+        self._link_lost_since: float | None = None
+
         pygame.init()
         pygame.display.set_caption("RC Car — Ground Station")
         display = self.config.get("display", {})
@@ -100,10 +117,21 @@ class GroundStation:
         self.wheel = self._make_wheel(args.keyboard)
 
         self.video: MjpegStream | None = None
+        self.cam_ping: CameraPing | None = None
         if not args.no_video:
             camera = self.config.get("camera", {})
+            stream_url = str(camera.get("stream_url"))
+            # decode=True: dekode JPEG dikerjakan di thread video, bukan di
+            # loop kendali 50 Hz ini. Lihat catatan di rcground/video.py.
             self.video = MjpegStream(
-                str(camera.get("stream_url")), float(camera.get("timeout_s", 3.0))
+                stream_url,
+                float(camera.get("timeout_s", 3.0)),
+                decode=True,
+            ).start()
+            # Interval jangan diperpendek tanpa membaca catatan batas socket
+            # di CameraPing -- probe yang menumpuk bisa memutus stream.
+            self.cam_ping = CameraPing(
+                stream_url, interval=float(camera.get("ping_interval_s", 2.0))
             ).start()
 
         self.armed = False
@@ -115,6 +143,19 @@ class GroundStation:
         self._frame_surface: pygame.Surface | None = None
         self._frame_id_shown = -1
         self._scaled_cache: tuple = (None, None)
+
+        # smoothscale menghasilkan gambar lebih halus tapi jauh lebih mahal
+        # daripada scale() -- di CPU lemah selisihnya beberapa milidetik per
+        # frame, dan itu langsung menjadi latensi video. Bisa dimatikan lewat
+        # display.smooth_scale: false di config.yaml kalau fps terasa kurang.
+        self._smooth_scale = bool(display.get("smooth_scale", True))
+
+        # Laju gambar-ulang minimum saat TIDAK ada frame video baru. Frame
+        # video baru SELALU digambar seketika (lihat run()), jadi ini tidak
+        # menambah latensi video sama sekali -- ia hanya menghentikan HUD
+        # digambar ulang 50 kali per detik tanpa ada yang berubah di layar.
+        self._render_min_interval = 1.0 / float(display.get("hud_rate_hz", 30) or 30)
+        self._last_render = 0.0
 
     # -- penyiapan -------------------------------------------------------
     def _make_wheel(self, force_keyboard: bool):
@@ -256,21 +297,41 @@ class GroundStation:
         self._scaled_cache = (None, None)
 
     # -- tampilan --------------------------------------------------------
-    def _decode_latest_frame(self) -> None:
+    def _decode_latest_frame(self) -> bool:
+        """Ambil frame terbaru. True kalau ada frame BARU yang siap digambar."""
         if self.video is None:
-            return
-        jpeg, frame_id = self.video.latest()
-        if jpeg is None or frame_id == self._frame_id_shown:
-            return
-        try:
-            surface = pygame.image.load(io.BytesIO(jpeg), "frame.jpg")
-        except pygame.error:
-            # Frame rusak di tengah jalan bukan alasan untuk menjatuhkan
-            # aplikasi; frame berikutnya tinggal 30-an milidetik lagi.
-            return
+            return False
+
+        # Jalur cepat: thread video sudah mendekode frame ini, jadi di sini
+        # tinggal convert() -- menyalin ke format piksel layar, jauh lebih
+        # murah daripada dekode JPEG dan memang harus di thread utama.
+        surface, frame_id = self.video.latest_surface()
+        if frame_id == self._frame_id_shown:
+            return False
+
+        if surface is None:
+            # Dekode dimatikan, atau frame itu gagal didekode di thread.
+            # Coba sendiri dari byte mentahnya sebelum menyerah.
+            jpeg, frame_id = self.video.latest()
+            if jpeg is None or frame_id == self._frame_id_shown:
+                return False
+            try:
+                surface = pygame.image.load(io.BytesIO(jpeg), "frame.jpg")
+            except pygame.error:
+                # Frame rusak di tengah jalan bukan alasan untuk menjatuhkan
+                # aplikasi; frame berikutnya tinggal 30-an milidetik lagi.
+                #
+                # Tandai frame ini sudah dilihat walau gagal. Tanpa itu, loop
+                # 50 Hz akan mencoba mendekode ulang byte rusak yang SAMA
+                # setiap iterasi sampai frame berikutnya tiba -- puluhan
+                # dekode gagal per detik, dan semuanya pasti gagal lagi.
+                self._frame_id_shown = frame_id
+                return False
+
         self._frame_surface = surface.convert()
         self._frame_id_shown = frame_id
         self._scaled_cache = (None, None)
+        return True
 
     def _blit_video(self) -> bool:
         if self._frame_surface is None:
@@ -283,7 +344,14 @@ class GroundStation:
             frame_w, frame_h = self._frame_surface.get_size()
             scale = min(screen_w / frame_w, screen_h / frame_h)
             size = (max(1, int(frame_w * scale)), max(1, int(frame_h * scale)))
-            cached_surface = pygame.transform.smoothscale(self._frame_surface, size)
+            if size == (frame_w, frame_h):
+                # Jendela sudah sebesar frame -- menskala 1:1 hanya menyalin
+                # piksel tanpa mengubah apa pun. Lewati sepenuhnya.
+                cached_surface = self._frame_surface
+            elif self._smooth_scale:
+                cached_surface = pygame.transform.smoothscale(self._frame_surface, size)
+            else:
+                cached_surface = pygame.transform.scale(self._frame_surface, size)
             self._scaled_cache = (key, cached_surface)
 
         self.screen.fill((10, 11, 14))
@@ -292,7 +360,8 @@ class GroundStation:
         return True
 
     def _build_context(
-        self, state, throttle_out: float, brake_out: float, failsafe: bool
+        self, state, throttle_out: float, brake_out: float, failsafe: bool,
+        link_lost: bool = False,
     ) -> HudContext:
         telemetry = self.link.telemetry
         return HudContext(
@@ -304,15 +373,22 @@ class GroundStation:
             gear=state.gear,
             gear_label=state.gear_label,
             trim=self.wheel.trim,
-            armed=self.armed and self.link.connected,
+            # Keduanya memakai link_lost yang SUDAH diperhalus, bukan
+            # link.connected mentah. Dengan failsafe firmware dimatikan,
+            # mobil memang tetap armed dan tetap jalan selama tautan
+            # tersendat sesaat -- jadi menampilkan DISARMED saat itu bukan
+            # cuma berkedut, tapi juga tidak benar.
+            armed=self.armed and not link_lost,
             failsafe=failsafe,
-            link_connected=self.link.connected,
+            link_connected=not link_lost,
             link_locked=self.link.locked,
             wheel_connected=self.wheel.connected,
             wheel_name=self.wheel.name,
             input_source=state.source,
             rtt_ms=self.link.rtt_ms,
+            cam_rtt_ms=self.cam_ping.rtt_ms if self.cam_ping else None,
             video_fps=self.video.fps if self.video else 0.0,
+            video_gap_ms=self.video.worst_gap_ms if self.video else 0.0,
             telemetry_hz=self.link.telemetry_hz,
             rssi=telemetry.rssi if telemetry else None,
             vbat=telemetry.vbat if telemetry else None,
@@ -330,6 +406,11 @@ class GroundStation:
             sfx_gas=self.sfx.pack_label("gas"),
             sfx_horn=self.sfx.pack_label("horn"),
             sfx_arm=self.sfx.pack_label("arm"),
+            # Hanya relevan untuk stir sungguhan; keyboard tidak butuh
+            # calibration.yaml dan memang tidak pernah membacanya.
+            calibration_missing=(
+                state.source == "wheel" and not self.calibration.get("axes")
+            ),
         )
 
     # -- loop utama ------------------------------------------------------
@@ -357,6 +438,22 @@ class GroundStation:
 
             self.link.poll()
 
+            # Tautan dianggap putus hanya setelah HILANG TERUS-MENERUS selama
+            # link_grace. Kedipan yang lebih pendek diabaikan sepenuhnya --
+            # inilah yang membuat tampilan dan suara tidak lagi berkedut tiap
+            # kali WiFi tersendat sesaat. Lihat catatan di __init__.
+            #
+            # Dihitung DI SINI, sebelum pemakai pertamanya di bawah, supaya
+            # semua keputusan dalam satu iterasi memakai jawaban yang sama.
+            if self.link.connected:
+                self._link_lost_since = None
+            elif self._link_lost_since is None:
+                self._link_lost_since = now
+            link_lost = (
+                self._link_lost_since is not None
+                and (now - self._link_lost_since) >= self.link_grace
+            )
+
             if self.link.locked and not announced_lock:
                 announced_lock = True
                 print(f"Mobil ditemukan di {self.link.target_description} - "
@@ -368,10 +465,14 @@ class GroundStation:
             # lewat network.disarm_on_link_loss -- lihat catatannya di
             # config.yaml, dan pastikan sepasang dengan FAILSAFE_ENABLED di
             # firmware supaya kedua sisi sepakat.
+            #
+            # Memakai link_lost, bukan link.connected mentah: kalau opsi ini
+            # dinyalakan, RTO sepersekian detik TIDAK boleh melepas arming --
+            # itu justru bentuk paling mengganggu dari masalah yang sama.
             if (
                 self.disarm_on_link_loss
                 and self.armed
-                and not self.link.connected
+                and link_lost
                 and self.link.rtt_ms is not None
             ):
                 self._disarm("Tautan putus — disarmed")
@@ -389,22 +490,38 @@ class GroundStation:
             # di _build_context, yang gampang berbeda kalau salah satu diubah
             # tanpa mengubah yang lain.
             telemetry = self.link.telemetry
-            failsafe = (
-                telemetry.failsafe if telemetry else False
-            ) or not self.link.connected
+            failsafe = (telemetry.failsafe if telemetry else False) or link_lost
 
             # Klakson mengikuti level tombol; tahan/lepas tidak me-restart
             # suara di setiap frame.
             keyboard_horn_now = pygame.key.get_pressed()[pygame.K_h]
             self.sfx.update_horn(state.horn_held or keyboard_horn_now)
-            self.sfx.update(dt, state.gas, active=self.armed and not failsafe)
+            # Suara mesin mengikuti keadaan ARM, bukan kesehatan tautan.
+            # sfx.update(active=False) memanggil stop_engine(), dan panggilan
+            # berikutnya dengan active=True memulai ignition DARI AWAL -- itu
+            # sumber suara starter yang berulang. Dengan link_lost yang sudah
+            # diperhalus di atas, kedipan sesaat tidak pernah sampai ke sini.
+            self.sfx.update(dt, state.gas, active=self.armed and not link_lost)
 
-            self._decode_latest_frame()
-            context = self._build_context(state, throttle_out, brake_out, failsafe)
-            if not self._blit_video():
-                self.hud.draw_no_video(self.screen, context)
-            self.hud.draw(self.screen, context, dt)
-            pygame.display.flip()
+            # Frame video BARU selalu digambar seketika; kalau tidak ada yang
+            # baru, layar cukup disegarkan pada laju HUD. Yang dihemat adalah
+            # menggambar ulang HUD 50 kali per detik padahal tidak ada yang
+            # berubah -- waktu itu dikembalikan ke loop kendali, dan loop yang
+            # tidak telat berarti paket kendali benar-benar keluar tiap 20 ms.
+            new_frame = self._decode_latest_frame()
+            render_now = time.monotonic()
+            if new_frame or (render_now - self._last_render) >= self._render_min_interval:
+                # dt render, bukan dt loop -- HUD memakainya untuk kedipan
+                # banner FAILSAFE, yang akan melambat kalau diberi dt loop.
+                render_dt = min(0.5, render_now - self._last_render)
+                self._last_render = render_now
+                context = self._build_context(
+                    state, throttle_out, brake_out, failsafe, link_lost
+                )
+                if not self._blit_video():
+                    self.hud.draw_no_video(self.screen, context)
+                self.hud.draw(self.screen, context, render_dt)
+                pygame.display.flip()
 
             next_tick += self.period
             sleep = next_tick - time.monotonic()
@@ -444,6 +561,8 @@ class GroundStation:
             time.sleep(0.01)
         if self.video:
             self.video.stop()
+        if self.cam_ping:
+            self.cam_ping.stop()
         self.link.close()
         pygame.quit()
 

@@ -22,7 +22,7 @@
 // akan menolak paket dari mobil itu, tapi mobil itu sendiri masih akan
 // menjawab siapa pun yang kebetulan memakai unit_id yang sama.
 // =================================================================
-#define UNIT_ID 1
+#define UNIT_ID 2
 
 // ----------------------------------------------------------------- jaringan
 
@@ -215,9 +215,9 @@
 // Cara mengukur ulang: konsol serial, "test on" lalu "servo <us>" naik/turun
 // bertahap sampai servo mendengung menahan di ujung, mundur 25 us dari titik
 // itu. Jangan lupa "test off" setelah selesai.
-#define SERVO_MIN_US 1200           // mentok KANAN
-#define SERVO_CENTER_US 1400        // lurus
-#define SERVO_MAX_US 1600           // mentok KIRI
+#define SERVO_MIN_US 1150           // mentok KANAN
+#define SERVO_CENTER_US 1300        // lurus
+#define SERVO_MAX_US 1450           // mentok KIRI
 
 // Arah belok. Set 1 kalau stir kanan justru membelokkan roda ke kiri.
 //

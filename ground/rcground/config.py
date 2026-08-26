@@ -63,8 +63,21 @@ DEFAULT_CONFIG: dict = {
         "broadcast": "192.168.137.255",
         "control_rate_hz": 50,
         "link_timeout_ms": 500,
+        # Berapa lama telemetri harus HILANG TERUS-MENERUS sebelum tampilan
+        # dan suara menganggapnya benar-benar putus. Kedipan yang lebih
+        # pendek dari ini diabaikan sepenuhnya -- tidak mengubah banner,
+        # tidak menghentikan suara mesin, tidak melepas arming.
+        # 30 detik: praktis tidak ada gangguan jaringan wajar yang lolos.
+        # Lihat catatan lengkap di config.example.yaml.
+        "link_grace_ms": 30000,
     },
-    "camera": {"stream_url": "http://192.168.137.60/stream", "timeout_s": 3.0},
+    "camera": {
+        "stream_url": "http://192.168.137.60/stream",
+        "timeout_s": 3.0,
+        # Jeda probe PING kamera. Jangan turunkan di bawah ~1 detik -- lihat
+        # catatan batas socket di CameraPing (rcground/video.py).
+        "ping_interval_s": 2.0,
+    },
     "steering": {
         "deadzone": 0.03,
         "trim": 0.0,
@@ -84,14 +97,24 @@ DEFAULT_CONFIG: dict = {
     },
     "shifter": {
         "enabled": True,
-        "gear_ratios": [0.35, 0.55, 0.75, 0.90, 1.00, 1.00],
+        # Semuanya 1.00: gigi maju tidak membatasi kecepatan, gigi 1..6
+        # identik. N dan R ditangani terpisah di wheel._process_geared() dan
+        # tidak terpengaruh daftar ini. Panjang daftar tetap menentukan gigi
+        # maju tertinggi. Lihat catatan lengkap di config.example.yaml.
+        "gear_ratios": [1.00, 1.00, 1.00, 1.00, 1.00, 1.00],
         "require_neutral_to_arm": True,
     },
     "brake": {
         "deadzone": 0.05,
         "strength": 1.0,
     },
-    "display": {"width": 960, "height": 720, "vsync": False},
+    "display": {
+        "width": 960,
+        "height": 720,
+        "vsync": False,
+        "smooth_scale": True,
+        "hud_rate_hz": 30,
+    },
     "sfx": {
         "enabled": True,
         "gas_pack": 9,

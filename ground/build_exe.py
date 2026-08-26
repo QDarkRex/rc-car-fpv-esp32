@@ -52,6 +52,9 @@ ISI FOLDER INI
                       saklar mode PXN digeser
                       Jalankan `Kalibrasi.exe --servo` untuk menyesuaikan
                       titik servo kiri/tengah/kanan tanpa arm mobil.
+  Latensi.exe         ukur latensi video sesungguhnya (glass-to-glass).
+                      Arahkan kamera mobil ke layar kiri, tekan SPASI untuk
+                      membekukan, selisih dua angka itulah latensinya.
   config.yaml         semua setelan (jaringan, kurva gas, batas kecepatan,
                       trim, dll). Edit dengan Notepad biasa, lalu jalankan
                       ulang RCCar.exe -- TIDAK perlu build ulang exe-nya.
@@ -153,6 +156,12 @@ def main() -> int:
     # Kalibrasi.exe tidak memutar suara apa pun, jadi tidak perlu membundel
     # assets/sfx -- menghematnya membuat exe ini tetap kecil.
     build_one("calibrate.py", "Kalibrasi")
+    # Latensi.exe ikut dibangun karena pengukuran latensi justru paling perlu
+    # dilakukan DI LAPANGAN, di LattePanda, dengan mobil dan WiFi yang
+    # sesungguhnya -- dan di sana belum tentu ada Python terpasang. Tanpa exe
+    # ini, satu-satunya cara mengukur adalah membawa laptop pengembangan ke
+    # lapangan. Sama seperti Kalibrasi.exe, tidak perlu assets/sfx.
+    build_one("latency_test.py", "Latensi")
 
     # config.yaml dan calibration.yaml DI LUAR exe, di sebelahnya, supaya
     # bisa diedit langsung dan langsung terbaca -- lihat catatan panjang di
