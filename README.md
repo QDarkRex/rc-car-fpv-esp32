@@ -43,6 +43,16 @@ firmware, dan setiap LattePanda punya `unit:` yang sama di
 
 ---
 
+## Melanjutkan pekerjaan orang lain?
+
+Baca [HANDOVER.md](HANDOVER.md) lebih dulu. Di sana ada keadaan terkini,
+masalah yang belum selesai, keputusan yang sudah diambil beserta alasannya,
+dan jebakan yang sudah memakan waktu — hal-hal yang tidak bisa dibaca dari
+kode. README ini menjelaskan cara **memakai**; HANDOVER menjelaskan
+**keadaannya**.
+
+---
+
 ## Status pengujian terakhir
 
 Checkpoint terbaru proyek, hasil kalibrasi PXN, perbaikan yang sudah masuk,
