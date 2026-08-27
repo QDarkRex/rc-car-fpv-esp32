@@ -331,7 +331,226 @@ yang bisa dinilai berhasil.
 
 ---
 
-## 7. Peta kode
+## 7. Prosedur pengujian
+
+Urutannya disusun supaya tiap fase menguji **satu hal baru** di atas fondasi
+yang sudah terbukti. Kalau satu fase gagal, berhenti — fase berikutnya hanya
+akan menyesatkan.
+
+> Versi halaman web yang lebih enak dibuka di HP sambil memegang mobil ada
+> di sini: <https://claude.ai/code/artifact/c3518c74-0ae5-413f-b577-644b6db1fbdd>
+> (perlu dibagikan pemiliknya lebih dulu). Isinya sama dengan bagian ini —
+> kalau berbeda, **yang di berkas ini yang benar**, karena ia ikut ter-versi
+> bersama kode.
+
+`<N>` di bawah = nomor unit yang sedang dipakai (lihat bagian 1; harus sama
+di firmware mobil, firmware kamera, dan `config.yaml`).
+
+### Fase 0 — Meja, tanpa hardware · AMAN
+
+Membuktikan sisi darat sehat sebelum hardware ikut jadi variabel.
+Tiga terminal dari `ground/`:
+
+```bash
+python fake_car.py --unit <N>
+python fake_cam.py
+python main.py --car 127.0.0.1 --cam http://127.0.0.1:8080/stream --keyboard
+```
+
+**Lolos:** banner `DISARMED` (bukan FAILSAFE), pojok kiri atas `UNIT <N>`,
+KENDALI di bawah 5 ms, terminal `fake_car` menunjukkan `rx` terus naik.
+
+Uji ketahanan sekalian: ulangi dengan `--drop 35`. Status harus **tetap**
+`DISARMED` — kalau berkedut ke FAILSAFE, tenggang tautan tidak bekerja.
+
+### Fase 1 — Flash kedua ESP32 · AMAN, LiPo belum disambung
+
+| Board | Sketch | Setelan Arduino IDE |
+|---|---|---|
+| Mobil | `rc_car_esp32/` | ESP32 Dev Module |
+| Kamera | `rc_cam_esp32/` **atau** `rc_cam_esp32_ap/` | XIAO_ESP32S3, PSRAM **OPI PSRAM**, Partition *Default with spiffs* |
+
+Pastikan `UNIT_ID` **sama** di keduanya sebelum upload. Buka Serial Monitor
+masing-masing di `115200`.
+
+**Lolos (mode klien):** mobil melaporkan `192.168.8.<49+N>`, kamera
+`192.168.8.<59+N>`, keduanya WiFi tersambung. Buka IP kamera di browser —
+gambar harus muncul.
+
+**Lolos (mode AP):** kamera mencetak `access point "RCCam-<N>" aktif di
+kanal …`. Sambungkan laptop ke SSID itu (sandi `admin.admin`), buka
+`http://192.168.4.1/` — gambar harus muncul.
+
+### Fase 2 — Konsol serial & kalibrasi baterai · roda di udara
+
+Naikkan roda dari lantai, sambungkan LiPo, buka Serial Monitor mobil:
+
+```
+status
+vbat
+```
+
+Ukur LiPo dengan multimeter, bandingkan dengan `vbat`. Kalau meleset:
+
+```
+rasio_baru = rasio_lama × (volt_multimeter ÷ volt_terbaca)
+```
+
+lalu perbarui `VBAT_DIVIDER_RATIO` dan flash ulang.
+
+**Lolos:** WiFi tersambung, `bukan-untuk-unit-ini` **tidak naik**, `vbat`
+cocok dalam ±0,2 V.
+
+> `bukan-untuk-unit-ini` yang naik terus = ada ground station lain mengirim
+> dengan unit_id berbeda, atau `UNIT_ID` Anda tidak sinkron.
+
+### Fase 3 — Servo lewat konsol · motor tidak disentuh
+
+Menguji linkage kemudi sendirian. Mode uji **mengabaikan** ground station
+dan berhenti sendiri 3 detik setelah perintah terakhir.
+
+```
+test on
+servo 1200     → roda LURUS
+servo 1000     → mentok KANAN
+servo 1500     → mentok KIRI
+test off
+```
+
+(Angka di atas = nilai `SERVO_*_US` saat ini; sesuaikan kalau sudah diubah.)
+
+**Lolos:** tiga posisi tercapai, gerakan halus, **tanpa dengung** di kedua
+ujung.
+
+> **Berhenti kalau servo mendengung menahan.** Ketik `stop` lalu `test off`,
+> persempit `SERVO_MIN_US`/`SERVO_MAX_US` 25 µs, flash ulang. Servo yang
+> menahan di ujung rusak dalam hitungan menit.
+
+### Fase 4 — Link penuh dari ground station · motor tidak bisa jalan
+
+**Uji langsung paling aman yang ada.** Mode `--servo` hanya mengirim paket
+disarmed dengan gas dan rem **dipaksa nol di sisi protokol**, jadi motor
+tidak mungkin berputar — sementara seluruh rantai UDP, telemetri, dan
+penyaringan `unit_id` tetap teruji.
+
+```bash
+python calibrate.py --servo        # atau Kalibrasi.exe --servo
+```
+
+`L`/`C`/`R` pilih titik, panah geser, `W` mode stir langsung (kalau stir
+sudah dikalibrasi), `ENTER` simpan.
+
+**Lolos:** layar menunjukkan **Link: terkunci** dan **telemetri: aktif**,
+servo bergerak mengikuti nilai yang dipilih.
+
+> Kalau tertulis "mencari mobil..." terus — **berhenti di sini**. `UNIT_ID`
+> atau jaringan belum benar. Semua fase sesudahnya tidak akan berarti.
+
+### Fase 5 — Kalibrasi stir · AMAN
+
+Lewati kalau memakai keyboard (`--keyboard`). Kalau memakai PXN V9 ini
+**wajib** — tanpa kalibrasi semua axis terbaca **0** dan mobil tidak
+bergerak sama sekali.
+
+```bash
+python calibrate.py
+```
+
+**Lolos:** wizard selesai sampai langkah klakson, dan pita kuning
+`KALIBRASI BELUM ADA` tidak muncul lagi di HUD.
+
+### Fase 6 — Arm dan motor · RODA WAJIB DI UDARA
+
+```bash
+python main.py        # atau RCCar.exe
+```
+
+1. Tunggu `DISARMED` dan pastikan tertulis `UNIT <N>`
+2. Masukkan **N**, tekan `SPASI` → `ARMED`, LED mobil **nyala terus**
+3. Gigi **N**: injak gas → roda **tidak boleh** berputar
+4. Gigi **1**: gas perlahan → roda berputar **maju**
+5. Gigi **6**: harus **sama kencang** dengan gigi 1 (gigi memang kosmetik)
+6. Gigi **R**: gas → roda berputar **mundur**
+7. Tekan `E` → motor berhenti seketika
+
+**Lolos:** arah maju/mundur benar, N benar-benar diam, gigi 1 = gigi 6, `E`
+menghentikan motor, L298N dan step-down hanya **hangat** setelah 30 detik.
+
+### Fase 7 — Video, latensi, dan patah-patah · roda di udara
+
+1. Gerakkan servo dan motor — video **tidak boleh** putus dan kamera
+   **tidak boleh** reboot. Kalau reboot: masalah catu daya 5 V, bukan
+   software.
+2. Baca panel kanan HUD:
+
+| Baris | Arti | Sehat |
+|---|---|---|
+| `PING` | ke **kamera** | < 60 ms |
+| `KENDALI` | ke **mobil** | < 30 ms |
+| `VIDEO` | fps rata-rata | ≥ 15 fps |
+| `PATAH` | **jeda frame terpanjang** | < 120 ms |
+| `TELEM` | laju telemetri | ~10 Hz |
+
+3. Ukur latensi glass-to-glass:
+
+```bash
+python latency_test.py     # atau Latensi.exe
+```
+
+Arahkan kamera mobil ke layar kiri yang menampilkan penghitung, tekan
+`SPASI` untuk membekukan. Selisih dua angka = latensi sesungguhnya.
+
+**Catat angka PATAH dan latensi.** Ini garis dasar Anda — tanpanya, tidak
+ada perubahan berikutnya yang bisa dinilai.
+
+### Fase 8 — Pahami perilaku failsafe · RODA WAJIB DI UDARA
+
+Bukan untuk memperbaiki apa pun — untuk memastikan Anda tahu apa yang
+terjadi **sebelum** itu terjadi di lantai.
+
+Arm, beri gas kecil sampai roda berputar, lalu **matikan hotspot WiFi**.
+
+Dengan `FAILSAFE_ENABLED 0`, roda akan **TERUS BERPUTAR** tanpa batas
+waktu. Itu bukan kerusakan — itu setelan yang aktif. Satu-satunya cara
+menghentikannya: nyalakan hotspot lagi, atau **cabut baterai**.
+
+Banner FAILSAFE juga baru muncul setelah **30 detik** (`link_grace_ms`).
+Indikator cepat: **TELEM** jatuh ke 0 Hz dalam hitungan detik.
+
+### Fase 9 — Turun ke lantai · ruang terbuka
+
+Mulai gigi 1, gas pendek-pendek. Uji belok kiri dan kanan — radius harus
+sama. Kalau menarik ke satu sisi: `[` atau `]` sampai lurus, lalu `F5`
+untuk menyimpan trim. **Berhenti di 14,0 V** — di bawah itu sel LiPo mulai
+rusak permanen.
+
+---
+
+### Alur khusus: mendiagnosis patah-patah
+
+Ini masalah yang belum selesai (bagian 2). Urutan yang benar:
+
+1. **Dapatkan garis dasar** — angka `PATAH` di mode klien
+   (`rc_cam_esp32/`), pada jarak dan lokasi yang biasa dipakai.
+2. **Serial Monitor kamera**, baca baris tiap 5 detik:
+   - Banner boot berulang → **brownout**, masalah catu daya
+   - fps rendah di sini → hambatan di kamera
+   - fps tinggi tapi `PATAH` besar → hambatan di **jaringan**
+   - `klien 0` (mode AP) → laptop belum tersambung
+3. **Cek kepadatan kanal** sambil tersambung:
+   ```bash
+   netsh wlan show networks mode=bssid | findstr /C:"SSID" /C:"Channel" /C:"Signal"
+   ```
+   Pindahkan router (atau `CAM_AP_CHANNEL`) ke 1/6/11 yang paling lengang.
+4. **Ubah SATU hal, ukur lagi.** Urutan termurah: kanal → QVGA → elko
+   kamera → mode AP.
+
+> Jangan mengubah dua hal sekaligus. Sudah beberapa kali di proyek ini
+> perubahan yang "jelas membantu" ternyata tidak berpengaruh.
+
+---
+
+## 8. Peta kode
 
 ```
 firmware/
@@ -371,7 +590,7 @@ docs/
 
 ---
 
-## 8. Tiga langkah pertama yang saya sarankan
+## 9. Tiga langkah pertama yang saya sarankan
 
 1. **Tuntaskan `UNIT_ID`** (bagian 1). Tanpa ini, semua pengujian lain
    menyesatkan.
