@@ -32,9 +32,32 @@ from collections import deque
 
 import pygame
 
+from . import protocol as proto
+
 SOI = b"\xff\xd8"   # penanda awal JPEG
 EOI = b"\xff\xd9"   # penanda akhir JPEG
 MAX_FRAME_BYTES = 1024 * 1024
+
+# Timeout recvfrom() di penerima UDP. Cukup pendek supaya thread bisa
+# memeriksa flag berhenti dan menandai tautan mati dengan wajar, cukup
+# panjang supaya tidak berputar sia-sia saat kamera memang diam.
+RECV_TIMEOUT = 0.2
+
+
+def decode_jpeg(jpeg: bytes) -> "pygame.Surface | None":
+    """Dekode satu frame. None kalau frame rusak -- bukan alasan berhenti.
+
+    Dipakai oleh KEDUA penerima (HTTP dan UDP), selalu dari thread jaringan
+    masing-masing, tidak pernah dari loop kendali 50 Hz.
+
+    pygame.image.load() memakai SDL_image dan tidak menyentuh display, jadi
+    aman dipanggil dari thread. Yang TIDAK aman adalah Surface.convert();
+    itu ditinggalkan untuk thread utama.
+    """
+    try:
+        return pygame.image.load(io.BytesIO(jpeg), "frame.jpg")
+    except (pygame.error, ValueError):
+        return None
 
 
 class CameraPing:
@@ -116,6 +139,230 @@ class CameraPing:
                     self._window.append(rtt)
                     self._rtt_ms = sum(self._window) / len(self._window)
             self._stop.wait(self.interval)
+
+
+class UdpVideoStream:
+    """Penerima video UDP -- pengganti MjpegStream saat memakai firmware UDP.
+
+    Antarmukanya SENGAJA sama persis dengan MjpegStream (latest,
+    latest_surface, fps, worst_gap_ms, connected, error, stop) supaya
+    main.py, HUD, dan latency_test.py tidak perlu tahu yang mana yang
+    sedang dipakai.
+
+    Kenapa ada: pada HTTP/TCP, satu segmen hilang menahan SELURUH aliran
+    sampai kiriman ulangnya sampai -- video membeku lalu frame menumpuk
+    datang serentak. Di sini fragmen yang hilang hanya membuang SATU frame;
+    frame berikutnya tetap datang tepat waktu. Lihat catatan panjang di
+    rcground/protocol.py bagian video UDP.
+
+    Frame yang tidak lengkap dibuang tanpa upaya penyelamatan apa pun.
+    Menampilkan JPEG yang separuh datanya hilang hanya menghasilkan sampah,
+    dan frame berikutnya toh tinggal beberapa puluh milidetik lagi.
+    """
+
+    def __init__(
+        self,
+        unit_id: int,
+        camera_host: str,
+        port: int = proto.VIDEO_PORT,
+        decode: bool = False,
+        subscribe_interval: float = 1.0,
+    ) -> None:
+        self.unit_id = int(unit_id)
+        self.camera_addr = (str(camera_host), int(port))
+        self.subscribe_interval = float(subscribe_interval)
+        self._decode = decode
+
+        self._lock = threading.Lock()
+        self._frame: bytes | None = None
+        self._surface: "pygame.Surface | None" = None
+        self._frame_id = 0
+        self._frame_times: deque = deque(maxlen=60)
+
+        # Perakitan ulang fragmen. Hanya beberapa frame terakhir yang
+        # disimpan: frame yang lebih tua dari yang sudah selesai tidak
+        # mungkin berguna lagi, dan menyimpannya hanya membuang memori.
+        self._pending: dict = {}
+        self._newest_done = -1
+
+        self.connected = False
+        self.error: str | None = None
+        self.reconnects = 0
+        # Fragmen yang tiba untuk frame yang keburu dibuang, atau frame yang
+        # tidak pernah lengkap. Berguna untuk membedakan "jaringan buruk"
+        # dari "kamera tidak mengirim".
+        self.dropped_frames = 0
+
+        self._stop = threading.Event()
+        self._sock: socket.socket | None = None
+        self._rx_thread = threading.Thread(
+            target=self._rx_loop, name="udpvideo", daemon=True
+        )
+        self._tx_thread = threading.Thread(
+            target=self._subscribe_loop, name="udpsub", daemon=True
+        )
+
+    # -- siklus hidup ----------------------------------------------------
+    def start(self) -> "UdpVideoStream":
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Buffer terima diperbesar: satu frame VGA bisa 20+ fragmen yang tiba
+        # nyaris bersamaan, dan buffer bawaan OS bisa meluap justru pada
+        # ledakan seperti itu -- yang akan terlihat sebagai frame tidak
+        # lengkap padahal jaringannya sehat.
+        try:
+            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
+        except OSError:
+            pass
+        self._sock.bind(("0.0.0.0", 0))
+        self._sock.settimeout(RECV_TIMEOUT)
+        self._rx_thread.start()
+        self._tx_thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._sock is not None:
+            try:
+                self._sock.close()
+            except OSError:
+                pass
+
+    # -- akses frame (sama seperti MjpegStream) --------------------------
+    def latest(self) -> tuple:
+        with self._lock:
+            return self._frame, self._frame_id
+
+    def latest_surface(self) -> tuple:
+        with self._lock:
+            return self._surface, self._frame_id
+
+    @property
+    def fps(self) -> float:
+        now = time.monotonic()
+        with self._lock:
+            times = [t for t in self._frame_times if now - t <= 2.0]
+        if len(times) < 2:
+            return 0.0
+        span = times[-1] - times[0]
+        return 0.0 if span <= 0 else (len(times) - 1) / span
+
+    @property
+    def worst_gap_ms(self) -> float:
+        """Jeda terpanjang antar frame -- lihat MjpegStream.worst_gap_ms."""
+        now = time.monotonic()
+        with self._lock:
+            times = [t for t in self._frame_times if now - t <= 3.0]
+        if not times:
+            return 0.0
+        gaps = [
+            (later - earlier) * 1000.0
+            for earlier, later in zip(times, times[1:])
+        ]
+        gaps.append((now - times[-1]) * 1000.0)
+        return max(gaps)
+
+    # -- internal --------------------------------------------------------
+    def _subscribe_loop(self) -> None:
+        """Minta kamera mengirim, berkala.
+
+        Berkala, bukan sekali: kalau aplikasi darat mati mendadak, kamera
+        berhenti sendiri setelah permintaan berhenti datang. UDP tidak punya
+        backpressure -- tanpa ini, kamera yang ditinggalkan akan terus
+        membanjiri jaringan dan mengganggu paket kendali mobil lain.
+        """
+        packet = proto.pack_subscribe(self.unit_id)
+        while not self._stop.is_set():
+            try:
+                if self._sock is not None:
+                    self._sock.sendto(packet, self.camera_addr)
+            except OSError as exc:
+                self.error = str(exc)
+            self._stop.wait(self.subscribe_interval)
+
+    def _publish(self, jpeg: bytes) -> None:
+        # Dekode di luar lock, alasan sama seperti MjpegStream._publish.
+        surface = decode_jpeg(jpeg) if self._decode else None
+        with self._lock:
+            self._frame = jpeg
+            self._surface = surface
+            self._frame_id += 1
+            self._frame_times.append(time.monotonic())
+
+    def _rx_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                data, _ = self._sock.recvfrom(2048)
+            except (TimeoutError, socket.timeout):
+                # Tidak ada frame dalam RECV_TIMEOUT. Bukan kesalahan --
+                # kamera mungkin baru menyala. connected dievaluasi dari
+                # waktu frame terakhir, bukan dari sini.
+                self._expire()
+                continue
+            except OSError:
+                return
+
+            fragment = proto.parse_video(data)
+            if fragment is None:
+                continue
+            if fragment.unit_id != self.unit_id:
+                # Kamera unit lain terdengar. Dibuang SEBELUM ikut membentuk
+                # frame -- alasan yang sama dengan penyaringan unit_id di
+                # link.py: lebih baik tidak ada video daripada video mobil
+                # sebelah. Lihat docs/protocol.md bagian 7.
+                continue
+
+            self._accept(fragment)
+
+    def _accept(self, fragment) -> None:
+        frame_id = fragment.frame_id
+        # Frame yang lebih tua dari yang sudah selesai tidak berguna lagi.
+        # Perbandingan memakai selisih bertanda supaya pembungkusan di 65535
+        # tidak membuat frame baru terlihat "lebih tua".
+        if self._newest_done >= 0:
+            age = (self._newest_done - frame_id) & 0xFFFF
+            if 0 < age < 0x8000:
+                return
+
+        slot = self._pending.get(frame_id)
+        if slot is None:
+            slot = {"count": fragment.count, "parts": {}}
+            self._pending[frame_id] = slot
+        slot["parts"][fragment.index] = fragment.payload
+
+        if len(slot["parts"]) != slot["count"]:
+            self._prune()
+            return
+
+        jpeg = b"".join(slot["parts"][i] for i in range(slot["count"]))
+        del self._pending[frame_id]
+        self._newest_done = frame_id
+        self.connected = True
+        self.error = None
+        # Semua frame yang masih menunggu dan lebih tua dari ini tidak akan
+        # pernah lengkap lagi -- fragmennya sudah lewat.
+        for older in [
+            fid for fid in self._pending
+            if 0 < ((frame_id - fid) & 0xFFFF) < 0x8000
+        ]:
+            del self._pending[older]
+            self.dropped_frames += 1
+        self._publish(jpeg)
+
+    def _prune(self) -> None:
+        # Batas keras supaya frame yang tidak pernah lengkap tidak menumpuk.
+        while len(self._pending) > 8:
+            oldest = min(self._pending)
+            del self._pending[oldest]
+            self.dropped_frames += 1
+
+    def _expire(self) -> None:
+        now = time.monotonic()
+        with self._lock:
+            last = self._frame_times[-1] if self._frame_times else 0.0
+        if last and (now - last) > 2.0:
+            self.connected = False
+            self.error = "tidak ada frame dari kamera"
 
 
 class MjpegStream:
@@ -208,24 +455,11 @@ class MjpegStream:
         return max(gaps)
 
     # -- internal --------------------------------------------------------
-    @staticmethod
-    def _decode_jpeg(jpeg: bytes) -> "pygame.Surface | None":
-        """Dekode satu frame. None kalau frame rusak -- bukan alasan berhenti.
-
-        pygame.image.load() memakai SDL_image dan tidak menyentuh display,
-        jadi aman dipanggil dari thread ini. Yang TIDAK aman di sini adalah
-        Surface.convert(); itu ditinggalkan untuk thread utama.
-        """
-        try:
-            return pygame.image.load(io.BytesIO(jpeg), "frame.jpg")
-        except (pygame.error, ValueError):
-            return None
-
     def _publish(self, jpeg: bytes) -> None:
         # Dekode DI LUAR lock: menahan lock selama belasan milidetik akan
         # memblokir latest()/latest_surface() di loop utama, dan itu persis
         # jenis jeda yang thread ini ada untuk mencegahnya.
-        surface = self._decode_jpeg(jpeg) if self._decode else None
+        surface = decode_jpeg(jpeg) if self._decode else None
         with self._lock:
             self._frame = jpeg
             self._surface = surface

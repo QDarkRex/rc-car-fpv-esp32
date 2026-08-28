@@ -73,6 +73,11 @@ DEFAULT_CONFIG: dict = {
     },
     "camera": {
         "stream_url": "http://192.168.137.60/stream",
+        # "http" = MJPEG lewat HTTP/TCP (firmware rc_cam_esp32 atau _ap).
+        # "udp"  = video lewat UDP (firmware rc_cam_esp32_udp).
+        # Lihat catatan lengkap di config.example.yaml.
+        "transport": "http",
+        "udp_port": 4211,
         "timeout_s": 3.0,
         # Jeda probe PING kamera. Jangan turunkan di bawah ~1 detik -- lihat
         # catatan batas socket di CameraPing (rcground/video.py).

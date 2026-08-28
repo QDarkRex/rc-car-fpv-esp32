@@ -85,6 +85,25 @@ camera:
   # stream_url: http://192.168.8.60/stream
   timeout_s: 3.0
 
+  # Cara video dikirim. HARUS cocok dengan firmware kamera yang di-flash.
+  #
+  #   http  firmware rc_cam_esp32/ atau rc_cam_esp32_ap/ (MJPEG lewat TCP)
+  #   udp   firmware rc_cam_esp32_udp/
+  #
+  # Kenapa ada pilihan udp: pada TCP, satu segmen hilang menahan SELURUH
+  # aliran sampai kiriman ulangnya sampai -- video membeku lalu frame
+  # menumpuk datang serentak. Itulah "patah-patah". Dengan UDP tidak ada
+  # kiriman ulang: fragmen hilang berarti SATU frame dibuang, dan frame
+  # berikutnya tetap datang tepat waktu.
+  #
+  # Gambar bisa sesekali hilang sekejap -- itu memang pertukarannya, dan
+  # untuk FPV jauh lebih baik daripada aliran yang membeku.
+  transport: http
+
+  # Port UDP video. Harus sama dengan VIDEO_PORT di firmware UDP.
+  # Sengaja beda dari port kendali (4210) supaya keduanya tidak bercampur.
+  udp_port: 4211
+
   # Jeda antar pengukuran PING kamera (baris PING di HUD). Diukur dengan
   # membuka koneksi TCP ke port HTTP kamera lalu menutupnya lagi.
   #

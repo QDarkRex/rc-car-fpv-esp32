@@ -30,6 +30,7 @@ import argparse
 import io
 import sys
 import time
+import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -40,7 +41,7 @@ from rcground import config as cfg
 from rcground.hud import Hud, HudContext
 from rcground.link import Link
 from rcground.sfx import SfxEngine
-from rcground.video import CameraPing, MjpegStream
+from rcground.video import CameraPing, MjpegStream, UdpVideoStream
 from rcground.wheel import KeyboardWheel, Wheel
 
 TRIM_STEP = 0.005
@@ -116,20 +117,38 @@ class GroundStation:
 
         self.wheel = self._make_wheel(args.keyboard)
 
-        self.video: MjpegStream | None = None
+        self.video = None
         self.cam_ping: CameraPing | None = None
         if not args.no_video:
             camera = self.config.get("camera", {})
             stream_url = str(camera.get("stream_url"))
-            # decode=True: dekode JPEG dikerjakan di thread video, bukan di
-            # loop kendali 50 Hz ini. Lihat catatan di rcground/video.py.
-            self.video = MjpegStream(
-                stream_url,
-                float(camera.get("timeout_s", 3.0)),
-                decode=True,
-            ).start()
+            transport = str(camera.get("transport", "http")).lower()
+
+            # decode=True di kedua jalur: dekode JPEG dikerjakan di thread
+            # jaringan, bukan di loop kendali 50 Hz ini. Lihat rcground/video.py.
+            #
+            # Kedua kelas punya antarmuka yang sama persis, jadi tidak ada
+            # kode di bawah ini yang perlu tahu mana yang dipakai.
+            if transport == "udp":
+                host = urllib.parse.urlparse(stream_url).hostname or "192.168.8.60"
+                self.video = UdpVideoStream(
+                    self.unit,
+                    host,
+                    port=int(camera.get("udp_port", 4211)),
+                    decode=True,
+                ).start()
+            else:
+                self.video = MjpegStream(
+                    stream_url,
+                    float(camera.get("timeout_s", 3.0)),
+                    decode=True,
+                ).start()
+
             # Interval jangan diperpendek tanpa membaca catatan batas socket
             # di CameraPing -- probe yang menumpuk bisa memutus stream.
+            # Tetap berguna di mode UDP: server HTTP kamera masih hidup
+            # sebagai halaman status, jadi probe ini tetap mengukur
+            # keterjangkauan kamera.
             self.cam_ping = CameraPing(
                 stream_url, interval=float(camera.get("ping_interval_s", 2.0))
             ).start()

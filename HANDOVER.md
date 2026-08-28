@@ -67,6 +67,34 @@ cocok sebagai pemicu.
 | `FRAMESIZE_QVGA` | **Belum benar-benar diuji** — sempat diset lalu dikembalikan ke VGA |
 | Kamera jadi Access Point | Dilaporkan **makin patah** — belum didiagnosis |
 
+| **Video lewat UDP** (`rc_cam_esp32_udp/`) | **Dibangun, lulus uji di simulator, BELUM diuji di hardware** |
+
+**Soal jalur UDP.** Ini serangan langsung ke akar masalah: selama memakai
+TCP, pembekuan tidak bisa dihilangkan, hanya diperjarang. UDP tidak punya
+kiriman ulang, jadi fragmen hilang hanya membuang **satu frame**.
+
+Terukur di simulator (`fake_cam_udp.py --drop`), jaringan bersih vs
+kehilangan fragmen 3%:
+
+| | Bersih | Loss 3% VGA | Loss 3% QVGA | Loss 1% QVGA |
+|---|---|---|---|---|
+| fps | 16,5 | 11-13 | ~14 | 16-17 |
+| PATAH | 63 ms | 240-300 ms | 118-238 ms | 99-177 ms |
+| Aliran membeku | tidak | **tidak** | **tidak** | **tidak** |
+
+Yang penting: aliran **tidak pernah** membeku di ketiga kondisi — frame
+dibuang, lalu yang berikutnya langsung datang. Itu perilaku yang tidak
+mungkin didapat dari TCP.
+
+Konsekuensinya, **ukuran frame jadi lebih penting, bukan kurang**: peluang
+frame selamat = (1 − loss)^jumlah_fragmen. VGA ≈ 12 fragmen, QVGA ≈ 3.
+`transport: udp` dan `FRAMESIZE_QVGA` saling menguatkan.
+
+> Catatan kejujuran: simulator membuang fragmen secara **acak seragam**,
+> yang lebih kejam daripada WiFi sungguhan — 802.11 sudah punya kiriman
+> ulang di lapisan tautan, jadi kehilangan yang benar-benar sampai ke
+> aplikasi biasanya jauh di bawah 1%. Angka di atas karena itu pesimistis.
+
 **Belum dicoba sama sekali:**
 
 - **Ganti kanal router.** Gratis, tanpa flash, dan sering paling

@@ -18,6 +18,50 @@ CONTROL_PORT = 4210
 CTRL_MAGIC = b"RC"
 TELE_MAGIC = b"RT"
 
+# ------------------------------------------------------------------ video UDP
+#
+# Protokol TERPISAH dari kendali, di port sendiri. Kembar dengan
+# firmware/rc_cam_esp32_udp/.
+#
+# KENAPA UDP UNTUK VIDEO, padahal HTTP/TCP sudah bekerja:
+#
+# Pada TCP, satu segmen hilang menahan SELURUH aliran sampai kiriman
+# ulangnya sampai -- video membeku, lalu frame menumpuk datang serentak.
+# Itulah "patah-patah" yang dikeluhkan, dan di 2,4 GHz yang padat paket
+# hilang adalah kejadian normal, bukan kelainan.
+#
+# UDP tidak punya kiriman ulang dan tidak menjamin urutan. Fragmen yang
+# hilang berarti SATU frame tidak lengkap lalu dibuang -- frame berikutnya
+# tetap datang tepat waktu. Untuk FPV itu pertukaran yang jelas
+# menguntungkan: gambar yang hilang sekejap jauh lebih baik daripada
+# seluruh aliran membeku.
+#
+# TIDAK ADA CRC di paket video, berbeda dengan paket kendali. UDP sudah
+# membawa checksum-nya sendiri dan lwIP di ESP32 menghitungnya, jadi paket
+# rusak sudah dibuang tumpukan jaringan sebelum sampai ke kita. Menambah
+# CRC8 di sini hanya membebani ESP32 pada setiap fragmen tanpa menangkap
+# apa pun yang belum tertangkap.
+VIDEO_PORT = 4211
+
+VIDEO_MAGIC = b"RV"     # fragmen video, kamera -> darat
+SUBSCRIBE_MAGIC = b"RS"  # permintaan stream, darat -> kamera
+
+# Muatan maksimum per fragmen. 1400 + 10 byte header = 1410, aman di bawah
+# MTU 1500 dikurangi header IP (20) dan UDP (8) = 1472. Sengaja tidak
+# dipepet ke batas: jaringan dengan MTU lebih kecil (VPN, beberapa AP)
+# akan memfragmentasi di lapisan IP, dan fragmen IP yang hilang membuang
+# seluruh datagram -- persis yang ingin dihindari.
+VIDEO_PAYLOAD_MAX = 1400
+
+_VIDEO_FMT = "<BBBBHBBH"           # magic, magic, versi, unit, frame, idx, cnt, len
+VIDEO_HEADER_SIZE = struct.calcsize(_VIDEO_FMT)
+
+_SUBSCRIBE_FMT = "<BBBB"
+SUBSCRIBE_SIZE = struct.calcsize(_SUBSCRIBE_FMT)
+
+assert VIDEO_HEADER_SIZE == 10, f"header video harus 10 byte, dapat {VIDEO_HEADER_SIZE}"
+assert SUBSCRIBE_SIZE == 4, f"paket subscribe harus 4 byte, dapat {SUBSCRIBE_SIZE}"
+
 # Flag paket kontrol
 FLAG_ARMED = 0x01
 FLAG_SERVO_CALIBRATION = 0x02  # steering-only, must remain disarmed/netral
@@ -138,6 +182,88 @@ def parse_control(data: bytes) -> Control | None:
     return Control(
         unit_id=unit_id, seq=seq, flags=flags, steer=steer, throttle=throttle, brake=brake
     )
+
+
+@dataclass(frozen=True)
+class VideoFragment:
+    unit_id: int
+    frame_id: int    # naik tiap frame, membungkus di 65535
+    index: int       # 0-based
+    count: int       # total fragmen frame ini
+    payload: bytes
+
+
+def pack_video(
+    unit_id: int, frame_id: int, index: int, count: int, payload: bytes
+) -> bytes:
+    if len(payload) > VIDEO_PAYLOAD_MAX:
+        raise ValueError(
+            f"muatan fragmen {len(payload)} melebihi {VIDEO_PAYLOAD_MAX}"
+        )
+    header = struct.pack(
+        _VIDEO_FMT,
+        VIDEO_MAGIC[0],
+        VIDEO_MAGIC[1],
+        PROTOCOL_VERSION,
+        unit_id & 0xFF,
+        frame_id & 0xFFFF,
+        index & 0xFF,
+        count & 0xFF,
+        len(payload),
+    )
+    return header + payload
+
+
+def parse_video(data: bytes) -> VideoFragment | None:
+    """Kembalikan VideoFragment, atau None bila paket tidak valid.
+
+    Sama seperti parse_control(): hanya memvalidasi BENTUK paket.
+    Penyaringan unit_id adalah tanggung jawab pemanggil, supaya kamera unit
+    lain yang kebetulan terdengar tidak pernah ikut membentuk frame di sini.
+    """
+    if len(data) < VIDEO_HEADER_SIZE:
+        return None
+    if data[0:2] != VIDEO_MAGIC or data[2] != PROTOCOL_VERSION:
+        return None
+    _, _, _, unit_id, frame_id, index, count, length = struct.unpack(
+        _VIDEO_FMT, data[:VIDEO_HEADER_SIZE]
+    )
+    # count 0 tidak masuk akal, dan index di luar count berarti paket rusak
+    # atau dari versi lain -- dibuang tanpa efek, seperti paket kendali cacat.
+    if count == 0 or index >= count:
+        return None
+    payload = data[VIDEO_HEADER_SIZE:]
+    if len(payload) != length:
+        return None
+    return VideoFragment(
+        unit_id=unit_id, frame_id=frame_id, index=index, count=count, payload=payload
+    )
+
+
+def pack_subscribe(unit_id: int) -> bytes:
+    """Permintaan agar kamera mulai/terus mengirim ke alamat pengirim.
+
+    Dikirim berkala oleh sisi darat, bukan sekali saja: kamera berhenti
+    mengirim kalau permintaan berhenti datang, sehingga kamera yang
+    ditinggalkan tidak terus membanjiri jaringan -- itu penting justru
+    karena UDP tidak punya mekanisme backpressure seperti TCP.
+    """
+    return struct.pack(
+        _SUBSCRIBE_FMT,
+        SUBSCRIBE_MAGIC[0],
+        SUBSCRIBE_MAGIC[1],
+        PROTOCOL_VERSION,
+        unit_id & 0xFF,
+    )
+
+
+def parse_subscribe(data: bytes) -> int | None:
+    """Kembalikan unit_id yang diminta, atau None bila paket tidak valid."""
+    if len(data) != SUBSCRIBE_SIZE:
+        return None
+    if data[0:2] != SUBSCRIBE_MAGIC or data[2] != PROTOCOL_VERSION:
+        return None
+    return data[3]
 
 
 def pack_telemetry(

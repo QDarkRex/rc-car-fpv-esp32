@@ -482,6 +482,46 @@ Uji jangkauan sebelum memakainya untuk balapan.
 Varian asli (`rc_cam_esp32/`) tidak diubah dan tetap bisa dipakai kapan
 saja — flash yang mana pun untuk membandingkan.
 
+### Video lewat UDP
+
+Selama video mengalir lewat **TCP**, pembekuan tidak bisa dihilangkan —
+hanya diperjarang. Satu segmen hilang menahan seluruh aliran sampai
+kiriman ulangnya sampai, dan di 2,4 GHz yang padat paket hilang adalah
+kejadian normal.
+
+`firmware/rc_cam_esp32_udp/` mengirim video lewat **UDP**: tidak ada
+kiriman ulang, tidak ada jaminan urutan. Fragmen yang hilang berarti
+**satu frame** dibuang, dan frame berikutnya tetap datang tepat waktu.
+
+Ini gagasan inti yang membuat proyek FPV berbasis packet-injection cepat,
+tapi diterapkan **di atas WiFi biasa** — tanpa mode monitor, tanpa dongle
+khusus, tanpa ganti OS, dan tanpa menyentuh tautan kendali 50 Hz.
+
+Cara memakainya:
+
+1. Flash `rc_cam_esp32_udp/` (setel `UNIT_ID` seperti biasa)
+2. Di `ground/config.yaml`, blok `camera:`, setel `transport: udp`
+
+Server HTTP kamera tetap hidup sebagai halaman status — buka
+`http://<ip-kamera>/` untuk memastikan kamera sehat tanpa menjalankan
+aplikasi darat.
+
+**Yang berubah rasanya:** aliran tidak lagi membeku, tapi saat sinyal
+buruk gambar bisa sesekali hilang sekejap (frame dibuang). Untuk FPV itu
+pertukaran yang jauh lebih baik daripada beku-lalu-menyusul.
+
+**Ukuran frame jadi lebih penting, bukan kurang.** Peluang sebuah frame
+selamat = (1 − loss)^jumlah_fragmen. Frame VGA ≈ 12 fragmen, QVGA ≈ 3.
+Pada kehilangan paket yang sama, QVGA menyelamatkan jauh lebih banyak
+frame — jadi `transport: udp` dan `FRAMESIZE_QVGA` saling menguatkan.
+
+Uji tanpa hardware, termasuk mensimulasikan jaringan buruk:
+
+```bash
+python fake_cam_udp.py --unit 1 --drop 3
+python main.py --car 127.0.0.1
+```
+
 ---
 
 ## Sebelum menurunkan mobil ke lantai
